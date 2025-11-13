@@ -32,6 +32,9 @@ Thumbs.db
 logs/
 *.log
 
+# Generated data
+transcripts/
+
 # Build outputs
 dist/
 build/
