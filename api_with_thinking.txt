@@ -1,0 +1,313 @@
+Got it—great brief. I dug through the **official** docs and SDKs (links + dates in-line). Here’s the crisp, copy-ready reference you asked for, plus minimal end-to-end examples.
+
+---
+
+# OpenAI (official)
+
+## 1) Reasoning controls
+
+* **Which models?** Models marked as “**Reasoning**” in the Models pages (e.g., **GPT-5**, **GPT-5 mini**, and earlier **o-series** like o4-mini) expose reasoning controls via the **Responses API**. See Models/Compare pages and model overviews. ([OpenAI Platform][1])
+* **Which API?** **Responses API** (`POST /v1/responses`). Chat Completions remains supported but reasoning features and modern streaming/events are centered on **Responses**. ([OpenAI Platform][2])
+* **Request schema (reasoning):**
+  In **Responses** requests, add a top-level `reasoning` object with an `effort` enum. Canonical values documented are **`"low" | "medium" | "high"`**. (OpenAI’s changelog also references a `"minimal"` level; SDK support may lag.) ([OpenAI Platform][3])
+
+**Minimal working examples**
+
+**curl**
+
+```bash
+curl https://api.openai.com/v1/responses \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5",
+    "instructions": "You are a careful reasoning assistant.",
+    "reasoning": { "effort": "high" },
+    "input": [
+      {"role":"user","content":"Solve 2*(x+3)=14. Show steps, then final x."}
+    ]
+  }'
+```
+
+**Node (official SDK)**
+
+```ts
+import OpenAI from "openai";
+const client = new OpenAI();
+
+const resp = await client.responses.create({
+  model: "gpt-5",
+  instructions: "You are a careful reasoning assistant.",
+  reasoning: { effort: "high" },
+  input: [{ role: "user", content: "Solve 2*(x+3)=14. Show steps, then final x." }],
+});
+console.log(resp.output_text);
+```
+
+(Responses API + Node SDK usage: repo examples.) ([GitHub][4])
+
+> Notes
+> • Reasoning controls are **Responses-only**; don’t expect parity on legacy Chat Completions. ([GitHub][5])
+> • “`minimal`” appears in changelogs; current SDK typings/issues show it may not yet be universally available. ([OpenAI Platform][3])
+
+---
+
+## 2) Opaque / “encrypted” chain-of-thought carry-forward
+
+* **Does OpenAI return an opaque reasoning blob to send in the next request?** **Yes, via `reasoning.encrypted_content` in Responses output items.** Docs state it “includes an encrypted version of reasoning tokens … enabling multi-turn conversations when using the Responses API statelessly.” ([OpenAI Platform][6])
+* **Where does it appear?** In **Responses** outputs as a **reasoning item** with `reasoning.encrypted_content` (opaque). (Docs call out the field; the site’s dynamic pages don’t always render, but the API reference explicitly names the field.) ([OpenAI Platform][6])
+* **How to send it back?** Include it in your **next Responses request** as an **input reasoning item** (stateless carry-forward), alongside your new user turn. Example below shows the shape used in SDKs and issues. (OpenAI’s public docs describe the field and intent; SDKs are converging on this pattern.)
+
+**curl (carry-forward)**
+
+```bash
+# suppose prev_resp contains a reasoning item with `encrypted_content`
+ENC="$(jq -r '.output[0].content[] | select(.type=="reasoning") | .reasoning.encrypted_content' prev_resp.json)"
+
+curl https://api.openai.com/v1/responses \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"gpt-5\",
+    \"store\": false,
+    \"input\": [
+      {\"role\":\"assistant\", \"content\":[
+        {\"type\":\"reasoning\", \"encrypted_content\":\"$ENC\"}
+      ]},
+      {\"role\":\"user\",\"content\":\"Continue from your prior scratchwork and finish the proof.\"}
+    ]
+  }"
+```
+
+**Node**
+
+```ts
+const enc = prevResp.output?.flatMap(o => o.content ?? [])
+  ?.find(c => c.type === "reasoning")?.reasoning?.encrypted_content;
+
+const next = await client.responses.create({
+  model: "gpt-5",
+  store: false, // stateless; we carry forward explicitly
+  input: [
+    { role: "assistant", content: [{ type: "reasoning", encrypted_content: enc }] },
+    { role: "user", content: "Continue from your prior scratchwork and finish the proof." }
+  ],
+});
+```
+
+* **Lifetime / PII / streaming:** Treat `encrypted_content` as **opaque**; do **not** attempt to parse or expose it to end users. When **streaming**, the reasoning item arrives among stream events; usage and final chunks arrive at completion. (See Responses streaming event docs.) ([OpenAI Platform][7])
+
+---
+
+## 3) Usage & token accounting
+
+* **Non-streaming:** Usage is returned on the top-level **`usage`** object of the Response with **`input_tokens`**, **`output_tokens`**, **`total_tokens`**; **reasoning models** also include **reasoning token accounting** surfaced in pricing/docs and usage for Responses. ([OpenAI Platform][2])
+* **Streaming:** Usage is included at the end of the stream in the **completion/finished event** (e.g., the terminal Responses streaming event / webhook “response.completed”), then accessible via `event.response.usage`. ([OpenAI Platform][7])
+
+> Tip: In the Node SDK stream, collect events and read `finalResponse()`/terminal event for usage (active SDK discussions track this behavior). ([GitHub][8])
+
+---
+
+## 4) “Smartest” model selection
+
+* **Official “smart/best/default” alias?** **No single “smart” alias** is documented.
+* **Recommend for maximum reasoning:** **`gpt-5`** (flagship reasoning/coding/agentic), cost-downs: **`gpt-5-mini`** (successor to o4-mini). See Models compare for current guidance. ([OpenAI Platform][1])
+
+---
+
+## End-to-end: streaming vs non-streaming (OpenAI)
+
+**Node (streaming)**
+
+```ts
+const stream = await client.responses.create({
+  model: "gpt-5",
+  reasoning: { effort: "high" },
+  input: [{ role: "user", content: "Explain the simplex method quickly." }],
+  stream: true,
+});
+
+for await (const evt of stream) {
+  if (evt.type === "response.output_text.delta") process.stdout.write(evt.delta);
+  if (evt.type === "response.completed") {
+    console.log("\nUSAGE:", evt.response.usage);
+  }
+}
+```
+
+(Responses streaming events: see API streaming docs.) ([OpenAI Platform][7])
+
+**curl (non-streaming)** – see example in §1; read `usage` from the JSON body. ([OpenAI Platform][2])
+
+**Preview/beta/SDK**
+
+* Use the **Responses API** and the **official `openai` Node SDK** (latest). Some reasoning features evolve; check the changelog for reasoning-effort notes. ([GitHub][4])
+
+---
+
+# Provider comparison (official sources only)
+
+## Anthropic Claude
+
+**Reasoning controls**
+
+* Enable with **`thinking`** param on **Messages API** (`POST /v1/messages`); requires a **thinking token budget** (≥ **1024**). ([Claude Docs][9])
+
+**Opaque carry-forward**
+
+* Claude **returns thinking blocks** and a **summary/signature**; **previous thinking is automatically stripped** when you pass the history back (so it doesn’t consume context). (Token-efficient treatment is automatic.) ([Claude Docs][10])
+
+**Usage/paths**
+
+* Usage is returned in the response; **thinking tokens** are a accounted class (see Extended Thinking tips and context window docs; count tokens via **Count Tokens** endpoint). ([Claude Docs][11])
+
+**Recommended models**
+
+* “Most intelligent” (reasoning): **Claude Sonnet 4.5**; fast: **Claude Haiku 4.5** (migration notes and model guidance). ([Claude Docs][12])
+
+**Examples (Claude, non-streaming)**
+
+```bash
+curl https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "model":"claude-sonnet-4-5-20250929",
+    "max_tokens":1024,
+    "thinking": { "type": "enabled", "budget_tokens": 2048 },
+    "messages":[{"role":"user","content":"Prove AM-GM for two variables."}]
+  }'
+```
+
+(Messages API + `thinking` param.) ([Claude Docs][9])
+
+---
+
+## Google **Gemini**
+
+**Reasoning controls**
+
+* **`thinkingBudget`** (aka **ThinkingConfig**) lets you control thinking tokens; **`0` disables**, **`-1` dynamic**; higher budgets ⇒ deeper reasoning. ([Google AI for Developers][13])
+
+**Opaque carry-forward**
+
+* **Thought signatures**: an **encrypted representation** of internal thoughts you can **pass back** to preserve reasoning context across turns. ([Google AI for Developers][14])
+
+**Usage/paths**
+
+* Usage is surfaced in **`usageMetadata`** (prompt/candidates/total token counts). (Docs on tokens; product notes indicate thinking tokens are included in totals.) ([Google AI for Developers][15])
+
+**Recommended models**
+
+* **Gemini 2.5 Pro** (state-of-the-art thinking). For lower latency, **Gemini 2.5 Flash** (supports thinking budgets). ([Google AI for Developers][16])
+
+**Example (JS, non-streaming)**
+
+```js
+import { GoogleGenerativeAI } from "@google/generative-ai";
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
+
+const result = await model.generateContent({
+  contents: [{ role: "user", parts: [{ text: "Factor x^2-5x+6" }] }],
+  thinking: { thinkingBudget: 2048 } // -1 dynamic, 0 disabled
+});
+console.log(result.response.text());
+```
+
+(Thinking budgets + models.) ([Google AI for Developers][13])
+
+---
+
+## xAI **Grok**
+
+**Reasoning controls**
+
+* `reasoning_effort` supported on some models (e.g., **`grok-4-fast-reasoning`**) with values like `low`/`high`. **Not supported** on **`grok-4`** (will error). ([xAI Docs][17])
+
+**Opaque carry-forward**
+
+* Returns **`reasoning_content`** and (optionally) **`encrypted_content`**; you can **return the encrypted content** in the **Responses API** to continue with prior thoughts. **Server-stored Responses** persist ~**30 days**. ([xAI Docs][17])
+
+**Usage/paths**
+
+* Usage counts **input / completion / reasoning / image / cached** tokens; see Models & Pricing. ([xAI Docs][18])
+
+**Recommended models**
+
+* **grok-4** (general high-end), **grok-4-fast-reasoning** (fast + reasoning), **grok-3-mini** (economical reasoning). ([xAI Docs][19])
+
+---
+
+## Extras you asked for
+
+### A) Non-streaming vs streaming (OpenAI) with reasoning enabled
+
+* **Non-streaming:** `POST /v1/responses` returns a JSON body with `output` items and `usage` (`…usage.input_tokens/output_tokens/total_tokens` plus reasoning accounting when applicable). ([OpenAI Platform][2])
+* **Streaming:** enable `"stream": true`; you’ll receive **SSE events** like `response.output_text.delta` and a terminal `response.completed` that includes **`response.usage`**. ([OpenAI Platform][7])
+
+### B) Exact field names for store-and-forward (opaque state)
+
+* **OpenAI:** **`reasoning.encrypted_content`** appears in a **reasoning output item**; **send back** as a **reasoning input item** with the same **`encrypted_content`** to continue in a stateless flow (or use `store: true` for server-side state). Field name and intent are documented; SDKs are converging on the input shape. ([OpenAI Platform][6])
+* **Gemini:** **Thought signatures** are explicitly documented and are passed back in subsequent turns. ([Google AI for Developers][14])
+* **Anthropic:** Prior thinking is **automatically stripped** if you include it in history; you usually don’t need to forward it manually. ([Claude Docs][10])
+* **xAI:** Return **`encrypted_content`** with the next **Responses** request to continue. ([xAI Docs][17])
+
+### C) Migration notes / endpoints / SDK versions
+
+* **OpenAI:** New reasoning features live on **Responses API**. Use the official `openai` SDK (latest). Changelog documents reasoning-effort levels and updates. ([OpenAI Platform][2])
+* **Anthropic:** Use **Messages API**; extended thinking has **minimum 1,024** token budget; several **beta headers** exist for specific features (e.g., interleaved thinking). ([Claude Docs][9])
+* **Gemini:** Use **Gemini API**; **`thinkingBudget`** in ThinkingConfig; **thought signatures** for carry-forward. ([Google AI for Developers][13])
+* **xAI:** **Responses API** supports **stateful** sessions and **encrypted reasoning** carry-forward; some models don’t accept `reasoning_effort`. ([xAI Docs][20])
+
+---
+
+## Tiny “with/without opaque carry-forward” examples (OpenAI)
+
+**Without carry-forward (server stores):**
+
+```ts
+await client.responses.create({
+  model: "gpt-5",
+  store: true,                 // let OpenAI store state
+  input: [{ role:"user", content:"Draft a 3-sentence abstract." }]
+});
+```
+
+(Responses API.) ([OpenAI Platform][2])
+
+**With carry-forward (stateless):** see the **curl** / **Node** snippets above that pass **`{type:"reasoning", encrypted_content: "..."}`**.
+
+---
+
+### TL;DR recommended defaults
+
+* **OpenAI:** `POST /v1/responses` on **`gpt-5`**, set `reasoning.effort:"high"` for hardest problems; **stream** in production. ([OpenAI Platform][2])
+* **Anthropic:** `POST /v1/messages`, **`thinking`** enabled with a **budget** (start at 1–2k and tune). ([Claude Docs][9])
+* **Gemini:** set **`thinkingBudget`** (0=off, −1=dynamic) and use **thought signatures** for multi-turn. ([Google AI for Developers][13])
+* **xAI:** prefer **grok-4-fast-reasoning** if you want explicit `reasoning_effort`; use **`encrypted_content`** to continue prior thoughts or **Responses** state. ([xAI Docs][21])
+
+If you want, I can drop in **ready-to-run** Node cURL scripts for all four providers in one folder with the exact request/response logging for `usage` and the (optional) opaque carry-forward fields.
+
+[1]: https://platform.openai.com/docs/models/compare?model=o4-mini&utm_source=chatgpt.com "Compare models - OpenAI API"
+[2]: https://platform.openai.com/docs/api-reference/responses?mkt_tok=mjuylvjgty0ymjcaaags7fxnm_jn52tiiblvxijdvnje4z15laurtxpmhdyr-rk6pyoekdqlz7r7dm-swlo3c73qabibmcilqp0tvnjrp1wjq9ckpoz93welxhdn4euei3bosq&mkt_tok=mjuylvjgty0ymjcaaags7fxnm_jn52tiiblvxijdvnje4z15laurtxpmhdyr-rk6pyoekdqlz7r7dm-swlo3c73qabibmcilqp0tvnjrp1wjq9ckpoz93welxhdn4euei3bosq&utm_cta=website-marketplace-page-featured&utm_source=chatgpt.com "API Reference"
+[3]: https://platform.openai.com/docs/changelog/settings/organization/general?utm_source=chatgpt.com "Changelog - OpenAI API"
+[4]: https://github.com/openai/openai-node?utm_source=chatgpt.com "Official JavaScript / TypeScript library for the OpenAI API"
+[5]: https://github.com/openai/completions-responses-migration-pack?utm_source=chatgpt.com "openai/completions-responses-migration-pack"
+[6]: https://platform.openai.com/docs/api-reference/introduction?utm_source=chatgpt.com "API Reference - OpenAI API"
+[7]: https://platform.openai.com/docs/api-reference/responses-streaming/response/in_progress?utm_source=chatgpt.com "API Reference"
+[8]: https://github.com/openai/openai-node/issues/1662?utm_source=chatgpt.com "`finalResponse()` missing `output_text` field in streaming ..."
+[9]: https://docs.anthropic.com/en/api/messages "Messages - Claude Docs"
+[10]: https://docs.anthropic.com/en/docs/build-with-claude/context-windows?utm_source=chatgpt.com "Context windows"
+[11]: https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/extended-thinking-tips?utm_source=chatgpt.com "Extended thinking tips"
+[12]: https://docs.anthropic.com/en/docs/about-claude/models/migrating-to-claude-4?utm_source=chatgpt.com "Migrating to Claude 4.5"
+[13]: https://ai.google.dev/gemini-api/docs/thinking?utm_source=chatgpt.com "Gemini thinking | Gemini API - Google AI for Developers"
+[14]: https://ai.google.dev/gemini-api/docs/function-calling?utm_source=chatgpt.com "Function calling with the Gemini API | Google AI for Developers"
+[15]: https://ai.google.dev/gemini-api/docs/tokens?utm_source=chatgpt.com "Understand and count tokens | Gemini API"
+[16]: https://ai.google.dev/gemini-api/docs/models?utm_source=chatgpt.com "Gemini Models | Gemini API - Google AI for Developers"
+[17]: https://docs.x.ai/docs/guides/reasoning?utm_source=chatgpt.com "Reasoning"
+[18]: https://docs.x.ai/docs/models?utm_source=chatgpt.com "Models and Pricing"
+[19]: https://docs.x.ai/docs/models/grok-4-0709?utm_source=chatgpt.com "Grok 4 - Welcome to the xAI documentation"
+[20]: https://docs.x.ai/docs/guides/responses-api?utm_source=chatgpt.com "Stateful Response with Responses API"
+[21]: https://docs.x.ai/docs/models/grok-4-fast-reasoning?utm_source=chatgpt.com "Grok 4 Fast"
+
