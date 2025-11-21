@@ -77,3 +77,49 @@ CREATE TABLE project_files (
 
 CREATE INDEX idx_project_files_project ON project_files(project_id);
 CREATE INDEX idx_project_files_path ON project_files(project_id, path);
+
+-- Content chunks for retrieval
+CREATE TABLE content_chunks (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,     -- 'file' | 'conversation_message'
+  source_id TEXT NOT NULL,       -- file.id or message.id
+  project_id TEXT NOT NULL,
+  chunk_index INTEGER,           -- Order within source (0, 1, 2...)
+  content TEXT NOT NULL,
+  location TEXT,                 -- JSON: { path, start_line, end_line, start_char, end_char } | { round_number, speaker }
+  summary TEXT,
+  token_count INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_chunks_source ON content_chunks(source_type, source_id);
+CREATE INDEX idx_chunks_project ON content_chunks(project_id);
+
+-- FTS5 retrieval index
+CREATE VIRTUAL TABLE retrieval_index USING fts5(
+  chunk_id UNINDEXED,
+  project_id UNINDEXED,
+  content,
+  metadata UNINDEXED,
+  tokenize = 'porter unicode61'
+);
+
+-- Cleanup triggers for chunk lifecycle
+CREATE TRIGGER cleanup_file_chunks
+AFTER DELETE ON project_files
+BEGIN
+  DELETE FROM content_chunks WHERE source_type = 'file' AND source_id = OLD.id;
+END;
+
+CREATE TRIGGER cleanup_message_chunks
+AFTER DELETE ON conversation_messages
+BEGIN
+  DELETE FROM content_chunks WHERE source_type = 'conversation_message' AND source_id = OLD.id;
+END;
+
+CREATE TRIGGER cleanup_fts_chunks
+AFTER DELETE ON content_chunks
+BEGIN
+  DELETE FROM retrieval_index WHERE chunk_id = OLD.id;
+END;
