@@ -15,6 +15,11 @@ async function sendXAI({ model, messages, options }) {
     ...(options && options.extraBody ? options.extraBody : {}),
   };
 
+  // Add tools if provided (server-side agentic tools)
+  if (options && options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
+    body.tools = options.tools;
+  }
+
   if (options && options.maxTokens !== undefined && body.max_tokens === undefined) {
     const maxOut = Number(options.maxTokens);
     if (Number.isFinite(maxOut) && maxOut > 0) body.max_tokens = Math.floor(maxOut);

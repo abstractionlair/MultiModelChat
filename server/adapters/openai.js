@@ -41,6 +41,13 @@ function extractOpenAIText(json) {
     for (const block of content) {
       if (block?.type === 'output_text' && typeof block.text === 'string') parts.push(block.text);
       else if (block?.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+      else if (block?.type === 'tool_use') {
+        // Include tool usage information in the output
+        parts.push(`\n\n[Tool: ${block.name || 'unknown'}]\n`);
+        if (block.input) {
+          parts.push(JSON.stringify(block.input, null, 2) + '\n');
+        }
+      }
     }
   }
   return parts.join('');
@@ -73,6 +80,11 @@ async function sendOpenAI({ model, messages, options, providerState }) {
     ...(options && options.reasoning ? { reasoning: options.reasoning } : {}),
     ...(options && options.extraBody ? options.extraBody : {}),
   };
+
+  // Add tools if provided (Responses API)
+  if (options && options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
+    body.tools = options.tools;
+  }
 
   if (options && options.maxTokens !== undefined && body.max_output_tokens === undefined) {
     const maxOut = Number(options.maxTokens);

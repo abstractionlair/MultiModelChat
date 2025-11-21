@@ -57,6 +57,11 @@ async function sendGoogle({ model, system, messages, options, providerState }) {
     ...(options && options.extraBody ? options.extraBody : {}),
   };
 
+  // Add tools if provided (googleSearch, codeExecution)
+  if (options && options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
+    body.tools = options.tools;
+  }
+
   if (options && options.maxTokens !== undefined) {
     const maxOut = Number(options.maxTokens);
     if (Number.isFinite(maxOut) && maxOut > 0) {
@@ -105,6 +110,12 @@ async function sendGoogle({ model, system, messages, options, providerState }) {
     for (const p of content.parts) {
       if (!p) continue;
       if (typeof p.text === 'string') text += p.text;
+      // Handle code execution results
+      else if (p.executableCode) {
+        text += '\n\n[Code Execution]\n```\n' + (p.executableCode.code || '') + '\n```\n';
+      } else if (p.codeExecutionResult) {
+        text += '\n[Execution Result]\n' + (p.codeExecutionResult.output || '') + '\n';
+      }
     }
   }
   // Fallback path: some SDKs emit candidates[0].content as array of Parts

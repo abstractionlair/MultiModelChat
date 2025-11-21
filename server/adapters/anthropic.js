@@ -47,12 +47,32 @@ async function sendAnthropic({ model, system, messages, options, providerState }
     setPath(payload, STATE_REQ_PATH, providerState);
   }
 
+  // Add tools if provided
+  if (options && options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
+    payload.tools = options.tools;
+  }
+
   const headers = {
     'Content-Type': 'application/json',
     'x-api-key': ANTHROPIC_API_KEY,
     'anthropic-version': '2023-06-01',
     ...(options && options.extraHeaders ? options.extraHeaders : {}),
   };
+
+  // Add beta headers for tools
+  if (options && options.tools && Array.isArray(options.tools)) {
+    const betas = [];
+    for (const tool of options.tools) {
+      if (tool.type === 'web_search_20250305') {
+        betas.push('web-search-2025-03-05');
+      } else if (tool.type === 'code_execution_20250825') {
+        betas.push('code-execution-2025-08-25');
+      }
+    }
+    if (betas.length > 0) {
+      headers['anthropic-beta'] = betas.join(',');
+    }
+  }
 
   const resp = await (fetchFn || fetch)('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -68,7 +88,15 @@ async function sendAnthropic({ model, system, messages, options, providerState }
   let text = '';
   if (Array.isArray(json.content)) {
     for (const block of json.content) {
-      if (block && block.type === 'text' && block.text) text += block.text;
+      if (block && block.type === 'text' && block.text) {
+        text += block.text;
+      } else if (block && block.type === 'tool_use') {
+        // Include tool usage information in the output
+        text += `\n\n[Tool: ${block.name}]\n`;
+        if (block.input) {
+          text += JSON.stringify(block.input, null, 2) + '\n';
+        }
+      }
     }
   }
   const meta = {

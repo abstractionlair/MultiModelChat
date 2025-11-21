@@ -492,17 +492,69 @@ app.post('/api/turn', async (req, res) => {
       }
     });
 
-    const results = await Promise.all(tasks);
-    // Auto-save if enabled for this conversation
-    if (conv.autoSave && conv.autoSave.enabled) {
-      try {
-        const p = await writeTranscript(conv, conv.autoSave.format || 'md');
-        if (dbg) console.log('[autosave] wrote', p);
-      } catch (e) {
-        if (dbg) console.log('[autosave] failed', e && e.message ? e.message : e);
+    // Check if client wants streaming (SSE)
+    const acceptsSSE = req.headers.accept && req.headers.accept.includes('text/event-stream');
+
+    if (acceptsSSE) {
+      // Stream responses as they arrive
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+
+      // Send conversation ID immediately
+      res.write(`data: ${JSON.stringify({ type: 'init', conversationId: convId })}\n\n`);
+
+      let completed = 0;
+      const total = tasks.length;
+
+      // Process promises as they resolve
+      for (let i = 0; i < tasks.length; i++) {
+        tasks[i].then(result => {
+          completed++;
+          res.write(`data: ${JSON.stringify({ type: 'result', result, completed, total })}\n\n`);
+
+          // If all done, finalize and close
+          if (completed === total) {
+            // Auto-save if enabled
+            if (conv.autoSave && conv.autoSave.enabled) {
+              writeTranscript(conv, conv.autoSave.format || 'md')
+                .then(p => { if (dbg) console.log('[autosave] wrote', p); })
+                .catch(e => { if (dbg) console.log('[autosave] failed', e && e.message ? e.message : e); });
+            }
+            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+            res.end();
+          }
+        }).catch(err => {
+          console.error('Task error:', err);
+          completed++;
+          const errorResult = {
+            agentId: `error-${i}`,
+            provider: 'unknown',
+            error: err.message || 'Unknown error'
+          };
+          res.write(`data: ${JSON.stringify({ type: 'result', result: errorResult, completed, total })}\n\n`);
+
+          if (completed === total) {
+            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+            res.end();
+          }
+        });
       }
+    } else {
+      // Legacy non-streaming response
+      const results = await Promise.all(tasks);
+      // Auto-save if enabled for this conversation
+      if (conv.autoSave && conv.autoSave.enabled) {
+        try {
+          const p = await writeTranscript(conv, conv.autoSave.format || 'md');
+          if (dbg) console.log('[autosave] wrote', p);
+        } catch (e) {
+          if (dbg) console.log('[autosave] failed', e && e.message ? e.message : e);
+        }
+      }
+      res.json({ conversationId: convId, results });
     }
-    res.json({ conversationId: convId, results });
   } catch (e) {
     console.error('turn error', e);
     res.status(500).json({ error: 'internal_error', detail: String(e && e.message ? e.message : e) });
