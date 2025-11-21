@@ -19,10 +19,24 @@ function newId(prefix = '') {
   return prefix ? `${prefix}_${id}` : id;
 }
 
+/**
+ * Get the default project ID from config
+ */
+function getDefaultProjectId() {
+  const result = db.prepare('SELECT value FROM config WHERE key = ?')
+    .get('default_project_id');
+
+  if (!result) {
+    throw new Error('Default project not found - run migrations');
+  }
+
+  return result.value;
+}
+
 // Graceful shutdown
 process.on('exit', () => db.close());
 process.on('SIGHUP', () => process.exit(128 + 1));
 process.on('SIGINT', () => process.exit(128 + 2));
 process.on('SIGTERM', () => process.exit(128 + 15));
 
-module.exports = { db, newId };
+module.exports = { db, newId, getDefaultProjectId };
