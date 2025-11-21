@@ -34,6 +34,7 @@ logs/
 
 # Generated data
 transcripts/
+storage/
 
 # Database files
 data.db
