@@ -651,8 +651,29 @@ app.post('/api/turn', async (req, res) => {
 // Fetch a conversation (simple inspection)
 app.get('/api/conversation/:id', (req, res) => {
   const id = req.params.id;
-  const conv = conversations.get(id);
-  if (!conv) return res.status(404).json({ error: 'not_found' });
+
+  // Try in-memory first
+  let conv = conversations.get(id);
+
+  // If not in memory, load from SQLite
+  if (!conv) {
+    const dbConv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
+    if (!dbConv) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
+    // Load messages and reconstruct
+    const loaded = loadConversationsFromSQLite();
+    conv = loaded.get(id);
+
+    if (!conv) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
+    // Add to in-memory cache
+    conversations.set(id, conv);
+  }
+
   res.json(conv);
 });
 
@@ -736,6 +757,8 @@ app.get('/api/models', async (req, res) => {
   try {
     const data = await listAllModels(DEFAULT_MODELS);
     const systemPrompts = getSystemPrompts();
+    const activeModels = getConfig('active_models', []);
+
     data.prompts = {
       common: systemPrompts.common,
       perProvider: {
@@ -745,9 +768,50 @@ app.get('/api/models', async (req, res) => {
         xai: systemPrompts.perProvider.xai || '',
       },
     };
+    data.activeModels = activeModels;
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'models_list_failed', detail: String(e && e.message ? e.message : e) });
+  }
+});
+
+// GET /api/conversations - List all conversations
+app.get('/api/conversations', (req, res) => {
+  try {
+    const projectId = req.query.project_id || getDefaultProjectId();
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    const convs = db.prepare(`
+      SELECT
+        id,
+        project_id,
+        title,
+        summary,
+        created_at,
+        updated_at,
+        round_count
+      FROM conversations
+      WHERE project_id = ?
+      ORDER BY updated_at DESC
+      LIMIT ? OFFSET ?
+    `).all(projectId, limit, offset);
+
+    const total = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM conversations
+      WHERE project_id = ?
+    `).get(projectId);
+
+    res.json({
+      conversations: convs,
+      total: total.count,
+      limit,
+      offset
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'list_failed', detail: String(e.message) });
   }
 });
 
@@ -793,6 +857,26 @@ app.post('/api/config/bulk', (req, res) => {
     res.json({ ok: true, updated: Object.keys(updates) });
   } catch (e) {
     res.status(500).json({ error: 'bulk_update_failed', detail: String(e.message) });
+  }
+});
+
+// GET /api/health - Server health check
+app.get('/api/health', (req, res) => {
+  try {
+    // Check database connection
+    db.prepare('SELECT 1').get();
+
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      conversations: conversations.size,
+      uptime: process.uptime()
+    });
+  } catch (e) {
+    res.status(500).json({
+      status: 'error',
+      error: e.message
+    });
   }
 });
 
