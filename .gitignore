@@ -35,6 +35,11 @@ logs/
 # Generated data
 transcripts/
 
+# Database files
+data.db
+data.db-shm
+data.db-wal
+
 # Build outputs
 dist/
 build/
