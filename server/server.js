@@ -21,6 +21,7 @@ const { listAllModels } = require('./adapters/models');
 const { db, getDefaultProjectId } = require('./db/index');
 const { runMigrations } = require('./db/migrate');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
+const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,6 +35,9 @@ let conversations = new Map();
 
 // Run migrations on startup
 runMigrations();
+
+// Initialize default config
+initializeDefaultConfig();
 
 // Migrate existing in-memory data (if any) to SQLite
 if (conversations.size > 0) {
@@ -71,6 +75,11 @@ const DEFAULT_PROMPTS = {
     xai: process.env.XAI_DEFAULT_PROMPT || '',
   },
 };
+
+// Load system prompts from config (with fallback to defaults)
+function getSystemPrompts() {
+  return getConfig('system_prompts', DEFAULT_PROMPTS);
+}
 
 function toPositiveInt(value) {
   if (value === undefined || value === null || value === '') return undefined;
@@ -726,18 +735,64 @@ app.post('/api/preview-view', (req, res) => {
 app.get('/api/models', async (req, res) => {
   try {
     const data = await listAllModels(DEFAULT_MODELS);
+    const systemPrompts = getSystemPrompts();
     data.prompts = {
-      common: DEFAULT_PROMPTS.common,
+      common: systemPrompts.common,
       perProvider: {
-        openai: DEFAULT_PROMPTS.perProvider.openai || '',
-        anthropic: DEFAULT_PROMPTS.perProvider.anthropic || '',
-        google: DEFAULT_PROMPTS.perProvider.google || '',
-        xai: DEFAULT_PROMPTS.perProvider.xai || '',
+        openai: systemPrompts.perProvider.openai || '',
+        anthropic: systemPrompts.perProvider.anthropic || '',
+        google: systemPrompts.perProvider.google || '',
+        xai: systemPrompts.perProvider.xai || '',
       },
     };
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'models_list_failed', detail: String(e && e.message ? e.message : e) });
+  }
+});
+
+// GET /api/config - Get all configuration
+app.get('/api/config', (req, res) => {
+  try {
+    const config = getAllConfig();
+    res.json(config);
+  } catch (e) {
+    res.status(500).json({ error: 'config_fetch_failed', detail: String(e.message) });
+  }
+});
+
+// POST /api/config - Update configuration
+app.post('/api/config', (req, res) => {
+  try {
+    const { key, value } = req.body;
+
+    if (!key) {
+      return res.status(400).json({ error: 'key_required' });
+    }
+
+    setConfig(key, value);
+    res.json({ ok: true, key, value });
+  } catch (e) {
+    res.status(500).json({ error: 'config_update_failed', detail: String(e.message) });
+  }
+});
+
+// POST /api/config/bulk - Update multiple config values
+app.post('/api/config/bulk', (req, res) => {
+  try {
+    const updates = req.body;
+
+    if (typeof updates !== 'object') {
+      return res.status(400).json({ error: 'invalid_format' });
+    }
+
+    for (const [key, value] of Object.entries(updates)) {
+      setConfig(key, value);
+    }
+
+    res.json({ ok: true, updated: Object.keys(updates) });
+  } catch (e) {
+    res.status(500).json({ error: 'bulk_update_failed', detail: String(e.message) });
   }
 });
 
