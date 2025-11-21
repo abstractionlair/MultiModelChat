@@ -1,5 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 const { ulid } = require('ulid');
 
 // Database file location
@@ -12,6 +13,17 @@ const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');  // Balance safety and performance
 db.pragma('busy_timeout = 5000');   // Wait up to 5s for locks
+
+// Storage directory for large files
+const STORAGE_DIR = process.env.STORAGE_DIR || path.join(__dirname, '..', '..', 'storage');
+
+// Create storage directory if it doesn't exist
+if (!fs.existsSync(STORAGE_DIR)) {
+  fs.mkdirSync(STORAGE_DIR, { recursive: true });
+}
+
+// Storage threshold (1MB)
+const STORAGE_THRESHOLD = 1024 * 1024;
 
 // ID generation utility
 function newId(prefix = '') {
@@ -39,4 +51,10 @@ process.on('SIGHUP', () => process.exit(128 + 1));
 process.on('SIGINT', () => process.exit(128 + 2));
 process.on('SIGTERM', () => process.exit(128 + 15));
 
-module.exports = { db, newId, getDefaultProjectId };
+module.exports = {
+  db,
+  newId,
+  getDefaultProjectId,
+  STORAGE_DIR,
+  STORAGE_THRESHOLD
+};

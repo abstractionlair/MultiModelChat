@@ -40,6 +40,9 @@ data.db
 data.db-shm
 data.db-wal
 
+# Storage files
+storage/
+
 # Build outputs
 dist/
 build/
