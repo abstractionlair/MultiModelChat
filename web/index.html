@@ -3,130 +3,934 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Multi-Model Chat MVP</title>
+    <title>Multi-Model Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-      body { font-family: system-ui, sans-serif; margin: 20px; }
-      .row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
-      .models { margin: 10px 0; }
-      .models .row input[type="text"] { width: 220px; }
-      .models .row select.modelSelect { min-width: 260px; }
-      .log { border: 1px solid #ccc; padding: 12px; border-radius: 8px; max-height: 50vh; overflow: auto; }
-      .msg { margin-bottom: 10px; }
-      .agent { padding: 8px; border-radius: 6px; background: #f6f8fa; }
-      .user {
-        padding: 8px;
-        border-radius: 6px;
-        background: #e8f0fe; /* stronger contrast */
-        border-left: 4px solid #1a73e8; /* blue accent */
+      :root {
+        --bg-primary: #0a0e17;
+        --bg-secondary: #111827;
+        --bg-tertiary: #1a2332;
+        --bg-elevated: #1e293b;
+
+        --text-primary: #e2e8f0;
+        --text-secondary: #94a3b8;
+        --text-muted: #64748b;
+
+        --accent-cyan: #06b6d4;
+        --accent-cyan-glow: rgba(6, 182, 212, 0.3);
+        --accent-green: #10b981;
+        --accent-purple: #a855f7;
+        --accent-orange: #f97316;
+        --accent-blue: #3b82f6;
+        --accent-pink: #ec4899;
+
+        --provider-openai: #10b981;
+        --provider-anthropic: #a855f7;
+        --provider-google: #f97316;
+        --provider-xai: #3b82f6;
+
+        --border-color: rgba(255, 255, 255, 0.08);
+        --border-glow: rgba(6, 182, 212, 0.2);
+
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+        --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+        --shadow-glow: 0 0 20px var(--accent-cyan-glow);
+
+        --font-mono: 'IBM Plex Mono', monospace;
+        --font-display: 'Rajdhani', sans-serif;
       }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes pulse-glow {
+        0%, 100% {
+          box-shadow: 0 0 5px var(--accent-cyan-glow), var(--shadow-md);
+        }
+        50% {
+          box-shadow: 0 0 20px var(--accent-cyan-glow), var(--shadow-md);
+        }
+      }
+
+      body {
+        font-family: var(--font-mono);
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        line-height: 1.6;
+        padding: 0;
+        margin: 0;
+        overflow-x: hidden;
+        position: relative;
+      }
+
+
+      body::after {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background:
+          repeating-linear-gradient(
+            0deg,
+            rgba(255, 255, 255, 0.01) 0px,
+            transparent 1px,
+            transparent 2px,
+            rgba(255, 255, 255, 0.01) 3px
+          );
+        pointer-events: none;
+        z-index: 999;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+        animation: fadeInUp 0.6s ease-out;
+      }
+
+      h1 {
+        font-family: var(--font-display);
+        font-size: 2.5rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: fadeInUp 0.6s ease-out;
+      }
+
+      .subtitle {
+        font-family: var(--font-display);
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 32px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        animation: fadeInUp 0.6s ease-out 0.1s both;
+      }
+
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+
+      .panel {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: var(--shadow-md);
+        transition: all 0.3s ease;
+        animation: fadeInUp 0.6s ease-out;
+      }
+
+      .panel:hover {
+        border-color: var(--border-glow);
+        box-shadow: var(--shadow-lg), 0 0 20px var(--accent-cyan-glow);
+      }
+
+      .panel-header {
+        font-family: var(--font-display);
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .panel-header::before {
+        content: '◆';
+        color: var(--accent-cyan);
+        font-size: 0.6rem;
+      }
+
+      label {
+        font-family: var(--font-display);
+        font-size: 0.813rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 600;
+      }
+
+      input[type="text"],
+      input[type="number"],
+      select,
+      textarea {
+        font-family: var(--font-mono);
+        font-size: 0.875rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 10px 14px;
+        color: var(--text-primary);
+        transition: all 0.2s ease;
+        outline: none;
+      }
+
+      input[type="text"]:focus,
+      input[type="number"]:focus,
+      select:focus,
+      textarea:focus {
+        border-color: var(--accent-cyan);
+        box-shadow: 0 0 0 3px var(--accent-cyan-glow);
+      }
+
+      input[type="text"]::placeholder,
+      textarea::placeholder {
+        color: var(--text-muted);
+        opacity: 0.6;
+      }
+
+      button {
+        font-family: var(--font-display);
+        font-size: 0.813rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 10px 20px;
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      button::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        transition: left 0.5s ease;
+      }
+
+      button:hover::before {
+        left: 100%;
+      }
+
+      button:hover {
+        border-color: var(--accent-cyan);
+        background: var(--bg-tertiary);
+        box-shadow: 0 0 12px var(--accent-cyan-glow);
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+        border: none;
+        color: var(--bg-primary);
+        font-weight: 700;
+      }
+
+      .btn-primary:hover {
+        box-shadow: var(--shadow-glow);
+        transform: translateY(-1px);
+      }
+
+      .models {
+        margin: 20px 0;
+      }
+
+      .models .row {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 12px;
+        position: relative;
+        transition: all 0.3s ease;
+        animation: fadeInUp 0.4s ease-out;
+      }
+
+      .models .row::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--provider-openai);
+        border-radius: 6px 0 0 6px;
+        transition: all 0.3s ease;
+      }
+
+      .models .row:has(.provider[value="anthropic"])::before {
+        background: var(--provider-anthropic);
+        box-shadow: 0 0 10px var(--provider-anthropic);
+      }
+
+      .models .row:has(.provider[value="google"])::before {
+        background: var(--provider-google);
+        box-shadow: 0 0 10px var(--provider-orange);
+      }
+
+      .models .row:has(.provider[value="xai"])::before {
+        background: var(--provider-xai);
+        box-shadow: 0 0 10px var(--provider-xai);
+      }
+
+      .models .row:has(.provider[value="openai"])::before {
+        background: var(--provider-openai);
+        box-shadow: 0 0 10px var(--provider-openai);
+      }
+
+      .models .row:hover {
+        border-color: var(--border-glow);
+        box-shadow: var(--shadow-md);
+      }
+
+      .models .row input[type="text"] {
+        min-width: 200px;
+      }
+
+      .models .row select.modelSelect {
+        min-width: 280px;
+      }
+
+      .provider {
+        font-weight: 600;
+        min-width: 120px;
+      }
+
+      .log {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 24px;
+        min-height: 50vh;
+        max-height: 70vh;
+        overflow-y: auto;
+        margin: 20px 0;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+        animation: fadeInUp 0.5s ease-out 0.2s both;
+      }
+
+      .log:empty::before {
+        content: 'Start a conversation by entering a message below...';
+        color: var(--text-muted);
+        font-style: italic;
+        display: block;
+        text-align: center;
+        padding: 60px 20px;
+      }
+
+      .log::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .log::-webkit-scrollbar-track {
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+      }
+
+      .log::-webkit-scrollbar-thumb {
+        background: var(--accent-cyan);
+        border-radius: 4px;
+      }
+
+      .log::-webkit-scrollbar-thumb:hover {
+        background: var(--accent-green);
+      }
+
+      .msg {
+        margin-bottom: 16px;
+        animation: fadeInUp 0.3s ease-out;
+      }
+
+      .user {
+        padding: 14px 18px;
+        border-radius: 6px;
+        background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(16, 185, 129, 0.1));
+        border-left: 3px solid var(--accent-cyan);
+        box-shadow: 0 0 20px rgba(6, 182, 212, 0.1);
+      }
+
       .user b {
         display: inline-block;
-        background: #1a73e8;
-        color: #fff;
-        padding: 2px 8px;
-        border-radius: 9999px;
-        font-weight: 600;
-        letter-spacing: 0.2px;
-        margin-right: 6px;
+        background: var(--accent-cyan);
+        color: var(--bg-primary);
+        padding: 4px 12px;
+        border-radius: 4px;
+        font-family: var(--font-display);
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        margin-right: 8px;
+        text-transform: uppercase;
+        font-size: 0.75rem;
       }
-      .user code { color: #0b57d0; }
-      .result { padding: 8px; border-radius: 6px; background: #f8fff0; }
-      code { white-space: pre-wrap; }
-      .small { color: #666; font-size: 12px; }
-      .hint { color: #666; font-size: 12px; }
-      .tokens { margin-left: 6px; }
-      .prompts { margin: 16px 0; }
-      .prompt-panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-top: 10px; background: #fafafa; }
-      .is-hidden { display: none; }
-      .prompt-section { margin-bottom: 16px; }
-      .prompt-section label { display: block; font-weight: 600; margin-bottom: 4px; }
-      .prompt-section textarea { width: 100%; min-height: 90px; font-family: monospace; padding: 8px; border-radius: 6px; border: 1px solid #ccc; }
-      .prompt-section textarea:focus { outline: 2px solid #4d90fe; }
-      .prompt-footnote { color: #666; font-size: 12px; margin-top: 4px; }
-      button { cursor: pointer; }
+
+      .user code {
+        color: var(--accent-cyan);
+        background: rgba(6, 182, 212, 0.1);
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+
+      .agent {
+        padding: 14px 18px;
+        border-radius: 6px;
+        background: var(--bg-elevated);
+        border-left: 3px solid var(--accent-green);
+        transition: all 0.3s ease;
+      }
+
+      .agent:hover {
+        background: var(--bg-tertiary);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .agent b {
+        font-family: var(--font-display);
+        font-weight: 600;
+        color: var(--accent-green);
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+      }
+
+      .result {
+        padding: 14px 18px;
+        border-radius: 6px;
+        background: rgba(248, 113, 113, 0.1);
+        border-left: 3px solid #ef4444;
+      }
+
+      .result b {
+        font-family: var(--font-display);
+        color: #ef4444;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+      }
+
+      code {
+        font-family: var(--font-mono);
+        white-space: pre-wrap;
+        font-size: 0.875rem;
+        line-height: 1.6;
+      }
+
+      .small {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+      }
+
+      .hint {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        font-style: italic;
+      }
+
+      .tokens {
+        font-family: var(--font-display);
+        font-size: 0.688rem;
+        color: var(--text-muted);
+        margin-left: 8px;
+        padding: 2px 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .prompts {
+        margin: 20px 0;
+      }
+
+      .config-section {
+        margin: 20px 0;
+        animation: fadeInUp 0.5s ease-out 0.1s both;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0;
+        box-shadow: var(--shadow-md);
+        overflow: hidden;
+      }
+
+      .config-section:nth-of-type(2) {
+        animation-delay: 0.15s;
+      }
+
+      .config-toggle {
+        width: 100%;
+        text-align: left;
+        font-size: 0.875rem;
+        padding: 14px 20px;
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        transition: all 0.3s ease;
+        position: relative;
+        padding-right: 50px;
+      }
+
+      .config-toggle::after {
+        content: '▼';
+        position: absolute;
+        right: 20px;
+        top: 50%;
+        transform: translateY(-50%) rotate(var(--arrow-rotation, 0deg));
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        transition: all 0.3s ease;
+      }
+
+      .config-toggle:hover {
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .config-toggle:hover::after {
+        color: var(--accent-cyan);
+      }
+
+      .config-section:hover {
+        border-color: var(--accent-cyan);
+        box-shadow: 0 0 16px var(--accent-cyan-glow);
+      }
+
+      .config-panel {
+        padding: 0 20px 20px 20px;
+        animation: fadeInUp 0.3s ease-out;
+        border-top: 1px solid var(--border-color);
+      }
+
+      .config-panel .control-panel,
+      .config-panel .panel {
+        margin-top: 16px;
+        margin-bottom: 16px;
+      }
+
+      .config-panel .control-panel:first-child,
+      .config-panel .panel:first-child {
+        margin-top: 20px;
+      }
+
+      .prompt-panel {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 12px;
+        box-shadow: var(--shadow-md);
+        animation: fadeInUp 0.3s ease-out;
+      }
+
+      .is-hidden {
+        display: none;
+      }
+
+      .prompt-section {
+        margin-bottom: 20px;
+      }
+
+      .prompt-section label {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .prompt-section textarea {
+        width: 100%;
+        min-height: 100px;
+        resize: vertical;
+      }
+
+      .prompt-footnote {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 6px;
+        font-style: italic;
+      }
+
+      .input-wrapper {
+        margin: 20px 0;
+        animation: fadeInUp 0.5s ease-out 0.25s both;
+      }
+
+      .input-group {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        box-shadow: var(--shadow-md);
+      }
+
+      .input-group input[type="text"] {
+        flex: 1;
+      }
+
+      .input-group .btn-primary {
+        padding: 12px 32px;
+        font-size: 0.875rem;
+      }
+
+      .attach-btn {
+        font-size: 1.5rem;
+        font-weight: 400;
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+        transition: all 0.2s ease;
+      }
+
+      .attach-btn:hover {
+        background: var(--accent-cyan);
+        color: var(--bg-primary);
+        border-color: var(--accent-cyan);
+        transform: rotate(45deg);
+      }
+
+      .attachments-preview {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .attachments-preview:empty {
+        display: none;
+      }
+
+      .attachment-chip {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.813rem;
+        animation: fadeInUp 0.2s ease-out;
+      }
+
+      .attachment-chip-name {
+        color: var(--text-primary);
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .attachment-chip-remove {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 0;
+        margin: 0;
+        font-size: 1.2rem;
+        line-height: 1;
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        transition: all 0.2s ease;
+      }
+
+      .attachment-chip-remove:hover {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+      }
+
+      .opts {
+        margin-top: 12px;
+        padding: 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        animation: fadeInUp 0.2s ease-out;
+      }
+
+      .optsBody .row {
+        margin-bottom: 8px;
+      }
+
+      input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        accent-color: var(--accent-cyan);
+      }
+
+      select option {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+      }
+
+      .smartChoice {
+        font-family: var(--font-display);
+        font-size: 0.75rem;
+        color: var(--accent-cyan);
+        font-weight: 500;
+      }
+
+      #convId {
+        font-family: var(--font-mono);
+        font-weight: 500;
+        color: var(--accent-green);
+      }
+
+      .control-panel {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+
+
+      #previewOut {
+        background: var(--bg-tertiary);
+        padding: 16px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        font-family: var(--font-mono);
+        font-size: 0.813rem;
+        white-space: pre-wrap;
+        max-height: 300px;
+        overflow: auto;
+        margin-top: 12px;
+      }
+
+      a {
+        color: var(--accent-cyan);
+        text-decoration: none;
+        transition: all 0.2s ease;
+      }
+
+      a:hover {
+        color: var(--accent-green);
+        text-decoration: underline;
+      }
+
+      @media (max-width: 768px) {
+        h1 {
+          font-size: 1.75rem;
+        }
+
+        .container {
+          padding: 16px;
+        }
+
+        .models .row {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .models .row input,
+        .models .row select,
+        .models .row button {
+          width: 100%;
+        }
+      }
+
+      .provider-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-size: 0.688rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .badge-openai {
+        background: rgba(16, 185, 129, 0.2);
+        color: var(--provider-openai);
+        border: 1px solid var(--provider-openai);
+      }
+
+      .badge-anthropic {
+        background: rgba(168, 85, 247, 0.2);
+        color: var(--provider-anthropic);
+        border: 1px solid var(--provider-anthropic);
+      }
+
+      .badge-google {
+        background: rgba(249, 115, 22, 0.2);
+        color: var(--provider-google);
+        border: 1px solid var(--provider-google);
+      }
+
+      .badge-xai {
+        background: rgba(59, 130, 246, 0.2);
+        color: var(--provider-xai);
+        border: 1px solid var(--provider-xai);
+      }
+
+      .model-count-display {
+        font-family: var(--font-display);
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent-cyan);
+        padding: 8px 16px;
+        background: rgba(6, 182, 212, 0.1);
+        border-radius: 4px;
+        border: 1px solid var(--accent-cyan);
+      }
     </style>
   </head>
   <body>
-    <h1>Multi-Model Chat MVP</h1>
-    <div class="row">
-      <label>Conversation ID:</label>
-      <input id="convId" placeholder="(new)" />
-      <button id="reset">Reset</button>
-    </div>
-    <div class="row">
-      <label for="modelCount">Models count:</label>
-      <input id="modelCount" type="number" min="1" max="12" value="2" style="width:80px" />
-      <button id="addModel">+ Add Model</button>
-      <button id="refreshModels">Refresh Models</button>
-    </div>
-    <div class="models">
-      <!-- rows are initialized by script -->
-    </div>
-    <div class="prompts">
-      <button id="togglePrompts">Show System Prompts</button>
-      <div id="promptPanel" class="prompt-panel is-hidden">
-        <div class="prompt-section">
-          <label for="promptCommon">Common system prompt</label>
-          <textarea id="promptCommon" placeholder="Use {{modelId}} to reference the resolved model."></textarea>
-          <div class="prompt-footnote">Applies to every provider. {{modelId}} is replaced with the resolved model id.</div>
-        </div>
-        <div class="prompt-section">
-          <label>Model-specific prompts</label>
-          <div class="prompt-footnote">Each model gets its own add-on instructions. Defaults come from the provider prompt.</div>
-          <div id="modelPromptList" class="prompt-model-list">
-            <div class="small prompt-placeholder">Add models to configure their prompts.</div>
+    <div class="container">
+      <h1>⬢ Multi-Model Command Center</h1>
+      <div class="subtitle">Parallel AI Model Orchestration System</div>
+
+      <!-- Collapsible configuration sections -->
+      <div class="config-section">
+        <button id="toggleConfig" class="config-toggle">⚙ Configuration</button>
+        <div id="configPanel" class="config-panel is-hidden">
+
+          <div class="control-panel">
+            <div class="panel-header">Session Control</div>
+            <div class="row">
+              <label>Conversation ID:</label>
+              <input id="convId" type="text" placeholder="(new session)" />
+              <button id="reset">Reset Session</button>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
-    <div class="log" id="log"></div>
 
-    <div class="prompts">
-      <button id="toggleAttachments">Show Text Attachments (per message)</button>
-      <div id="attachmentsPanel" class="prompt-panel is-hidden">
-        <div class="row" style="justify-content: space-between; align-items: center;">
-          <div class="small">Paste snippets or load text files. Attachments are included only with the next send (per message), not stored in the conversation. The UI keeps them until removed.</div>
-          <div>
-            <button id="addAttachment">+ Add Attachment</button>
-            <button id="addAttachmentFile">Add From File</button>
-            <input id="attachmentFileInput" type="file" multiple accept="text/*,.txt,.md,.markdown,.json,.csv,.log,.yaml,.yml,.html" style="display:none" />
+          <div class="panel">
+            <div class="panel-header">Model Configuration</div>
+            <div class="row" style="margin-bottom: 16px;">
+              <label for="modelCount">Active Models:</label>
+              <input id="modelCount" type="number" min="1" max="12" value="2" style="width:80px" />
+              <button id="addModel">+ Add Model</button>
+              <button id="refreshModels">⟳ Refresh</button>
+            </div>
+            <div class="models">
+              <!-- rows are initialized by script -->
+            </div>
           </div>
+
+          <div class="prompts">
+            <button id="togglePrompts">System Prompts</button>
+            <div id="promptPanel" class="prompt-panel is-hidden">
+              <div class="prompt-section">
+                <label for="promptCommon">Common System Prompt</label>
+                <textarea id="promptCommon" placeholder="Use {{modelId}} to reference the resolved model."></textarea>
+                <div class="prompt-footnote">Applies to every provider. {{modelId}} is replaced with the resolved model id.</div>
+              </div>
+              <div class="prompt-section">
+                <label>Model-Specific Prompts</label>
+                <div class="prompt-footnote">Each model gets its own add-on instructions. Defaults come from the provider prompt.</div>
+                <div id="modelPromptList" class="prompt-model-list">
+                  <div class="small prompt-placeholder">Add models to configure their prompts.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
-        <div id="attachmentsContainer"></div>
+      </div>
+
+      <!-- Advanced options - collapsible -->
+      <div class="config-section">
+        <button id="toggleAdvanced" class="config-toggle">Advanced Options</button>
+        <div id="advancedPanel" class="config-panel is-hidden">
+
+          <div class="prompt-panel">
+            <div class="panel-header">Debug & Preview</div>
+            <div class="row" style="margin-bottom: 12px;">
+              <label class="small" style="display: flex; align-items: center; gap: 6px;">
+                <input id="debugToggle" type="checkbox" /> Enable debug mode
+              </label>
+            </div>
+            <div class="row">
+              <label>Provider:</label>
+              <select id="previewProvider" style="min-width:120px;">
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+                <option value="google">google</option>
+                <option value="xai">xai</option>
+              </select>
+              <label>Model:</label>
+              <select id="previewModel" class="modelSelect" style="min-width:260px;"></select>
+              <button id="previewBtn">Generate Preview</button>
+              <button id="previewCopy">Copy</button>
+            </div>
+            <pre id="previewOut" class="small"></pre>
+          </div>
+
+          <div class="prompt-panel">
+            <div class="panel-header">Export & Auto-Save</div>
+            <div class="row" style="flex-wrap:wrap; gap:12px;">
+              <button id="downloadMd">↓ Download Markdown</button>
+              <label class="small" style="display: flex; align-items: center; gap: 8px;">
+                <input id="autoSaveToggle" type="checkbox" /> Auto-save to server (Markdown)
+              </label>
+              <span id="autoSaveNote" class="small"></span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Main chat area - always visible -->
+      <div class="log" id="log"></div>
+
+      <!-- Input area - always visible -->
+      <div class="input-wrapper">
+        <div id="attachmentsPreview" class="attachments-preview"></div>
+        <div class="input-group">
+          <button id="attachBtn" class="attach-btn" title="Attach files">+</button>
+          <input id="attachmentFileInput" type="file" multiple accept="text/*,.txt,.md,.markdown,.json,.csv,.log,.yaml,.yml,.html" style="display:none" />
+          <input id="userMsg" type="text" placeholder="Enter command..." />
+          <button id="send" class="btn-primary">Send ▸</button>
+        </div>
       </div>
     </div>
-
-    <div class="row">
-      <input id="userMsg" style="flex:1" placeholder="Type your message..." />
-      <label class="small"><input id="debugToggle" type="checkbox" /> debug</label>
-      <span id="attachmentsSummary" class="small"></span>
-      <button id="send">Send</button>
-    </div>
-
-    <div class="prompt-panel" style="margin-top:8px;">
-      <div class="row">
-        <label style="min-width:120px;">Preview as:</label>
-        <select id="previewProvider" style="min-width:120px;">
-          <option value="openai">openai</option>
-          <option value="anthropic">anthropic</option>
-          <option value="google">google</option>
-          <option value="xai">xai</option>
-        </select>
-        <select id="previewModel" class="modelSelect" style="min-width:260px;"></select>
-        <button id="previewBtn">Preview View</button>
-        <button id="previewCopy">Copy</button>
-      </div>
-      <pre id="previewOut" class="small" style="white-space:pre-wrap; max-height:240px; overflow:auto; background:#f7f7f7; padding:8px; border-radius:6px; border:1px solid #eee;"></pre>
-    </div>
-
-    <div class="prompt-panel" style="margin-top:8px;">
-      <div class="row" style="flex-wrap:wrap; gap:8px;">
-        <button id="downloadMd">Download Markdown</button>
-        <label class="small"><input id="autoSaveToggle" type="checkbox" /> Auto‑save to server (Markdown)</label>
-        <span id="autoSaveNote" class="small"></span>
-      </div>
-    </div>
-
 
     <script>
       const q = (sel, el=document) => el.querySelector(sel);
@@ -136,14 +940,10 @@
       const userMsgEl = q('#userMsg');
       const modelCountEl = q('#modelCount');
       const debugToggle = q('#debugToggle');
-      const toggleAttachmentsBtn = q('#toggleAttachments');
-      const attachmentsPanel = q('#attachmentsPanel');
-      const attachmentsContainer = q('#attachmentsContainer');
-      const addAttachmentBtn = q('#addAttachment');
-      const addAttachmentFileBtn = q('#addAttachmentFile');
+      const attachBtn = q('#attachBtn');
       const attachmentFileInput = q('#attachmentFileInput');
+      const attachmentsPreview = q('#attachmentsPreview');
       const refreshModelsBtn = q('#refreshModels');
-      const attachmentsSummary = q('#attachmentsSummary');
       const togglePromptsBtn = q('#togglePrompts');
       const promptPanel = q('#promptPanel');
       const promptCommonEl = q('#promptCommon');
@@ -197,45 +997,50 @@
         return `<span class='small tokens'>${pieces.join(' ')}</span>`;
       }
 
+      // Main configuration toggle
+      const toggleConfigBtn = q('#toggleConfig');
+      const configPanel = q('#configPanel');
+      if (toggleConfigBtn && configPanel) {
+        toggleConfigBtn.addEventListener('click', () => {
+          const isHidden = configPanel.classList.toggle('is-hidden');
+          toggleConfigBtn.textContent = isHidden ? '⚙ Configuration' : '⚙ Hide Configuration';
+          // Rotate arrow
+          if (isHidden) {
+            toggleConfigBtn.style.setProperty('--arrow-rotation', '0deg');
+          } else {
+            toggleConfigBtn.style.setProperty('--arrow-rotation', '180deg');
+          }
+        });
+        toggleConfigBtn.style.setProperty('--arrow-rotation', '0deg');
+      }
+
+      // Advanced options toggle
+      const toggleAdvancedBtn = q('#toggleAdvanced');
+      const advancedPanel = q('#advancedPanel');
+      if (toggleAdvancedBtn && advancedPanel) {
+        toggleAdvancedBtn.addEventListener('click', () => {
+          const isHidden = advancedPanel.classList.toggle('is-hidden');
+          toggleAdvancedBtn.textContent = isHidden ? 'Advanced Options' : 'Hide Advanced Options';
+          // Rotate arrow
+          if (isHidden) {
+            toggleAdvancedBtn.style.setProperty('--arrow-rotation', '0deg');
+          } else {
+            toggleAdvancedBtn.style.setProperty('--arrow-rotation', '180deg');
+          }
+        });
+        toggleAdvancedBtn.style.setProperty('--arrow-rotation', '0deg');
+      }
+
       if (togglePromptsBtn && promptPanel) {
         togglePromptsBtn.addEventListener('click', () => {
           const isHidden = promptPanel.classList.toggle('is-hidden');
-          togglePromptsBtn.textContent = isHidden ? 'Show System Prompts' : 'Hide System Prompts';
+          togglePromptsBtn.textContent = isHidden ? 'System Prompts' : 'Hide Prompts';
         });
-        togglePromptsBtn.textContent = 'Show System Prompts';
+        togglePromptsBtn.textContent = 'System Prompts';
       }
 
-      if (toggleAttachmentsBtn && attachmentsPanel) {
-        toggleAttachmentsBtn.addEventListener('click', () => {
-          const isHidden = attachmentsPanel.classList.toggle('is-hidden');
-          toggleAttachmentsBtn.textContent = isHidden ? 'Show Text Attachments (per message)' : 'Hide Text Attachments';
-        });
-        toggleAttachmentsBtn.textContent = 'Show Text Attachments (per message)';
-      }
-
-      function makeAttachmentRow() {
-        const wrap = document.createElement('div');
-        wrap.className = 'prompt-section';
-        const id = `att-${Math.random().toString(36).slice(2,8)}`;
-        wrap.innerHTML = `
-          <label for="${id}-title">Title (optional)</label>
-          <input id="${id}-title" class="att-title" placeholder="e.g., Prior Chat (highlights)" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:6px;" />
-          <label for="${id}-content" style="margin-top:6px">Text</label>
-          <textarea id="${id}-content" class="att-content" placeholder="Paste text..."></textarea>
-          <div class="row" style="justify-content: flex-end;">
-            <button class="remove-attachment">Remove</button>
-          </div>
-        `;
-        q('.remove-attachment', wrap).onclick = () => { wrap.remove(); updateAttachmentsSummary(); };
-        return wrap;
-      }
-
-      if (addAttachmentBtn && attachmentsContainer) {
-        addAttachmentBtn.addEventListener('click', () => {
-          attachmentsContainer.appendChild(makeAttachmentRow());
-          updateAttachmentsSummary();
-        });
-      }
+      // File attachment system
+      let attachedFiles = [];
 
       function readFileAsText(file) {
         return new Promise((resolve, reject) => {
@@ -246,33 +1051,44 @@
         });
       }
 
-      if (addAttachmentFileBtn && attachmentFileInput && attachmentsContainer) {
-        addAttachmentFileBtn.addEventListener('click', () => attachmentFileInput.click());
+      function renderAttachments() {
+        attachmentsPreview.innerHTML = '';
+        attachedFiles.forEach((fileData, index) => {
+          const chip = document.createElement('div');
+          chip.className = 'attachment-chip';
+          chip.innerHTML = `
+            <span class="attachment-chip-name" title="${fileData.name}">${fileData.name}</span>
+            <button class="attachment-chip-remove" data-index="${index}">×</button>
+          `;
+          attachmentsPreview.appendChild(chip);
+        });
+
+        // Add remove handlers
+        qa('.attachment-chip-remove').forEach(btn => {
+          btn.onclick = () => {
+            const index = parseInt(btn.dataset.index);
+            attachedFiles.splice(index, 1);
+            renderAttachments();
+          };
+        });
+      }
+
+      if (attachBtn && attachmentFileInput) {
+        attachBtn.addEventListener('click', () => attachmentFileInput.click());
         attachmentFileInput.addEventListener('change', async (e) => {
           const files = Array.from(e.currentTarget.files || []);
           for (const f of files) {
             try {
               const text = await readFileAsText(f);
-              const row = makeAttachmentRow();
-              attachmentsContainer.appendChild(row);
-              const titleEl = q('.att-title', row);
-              const contentEl = q('.att-content', row);
-              if (titleEl) titleEl.value = f.name || '';
-              if (contentEl) contentEl.value = text || '';
+              attachedFiles.push({ name: f.name, content: text });
             } catch (err) {
               addLog(`<div class='result'><b>Attachment error</b>: <code>${String(err && err.message ? err.message : err).replace(/</g,'&lt;')}</code></div>`);
             }
           }
           // reset input so selecting the same file again re-triggers change
           e.currentTarget.value = '';
-          updateAttachmentsSummary();
+          renderAttachments();
         });
-      }
-
-      function updateAttachmentsSummary() {
-        if (!attachmentsSummary) return;
-        const count = qa('#attachmentsContainer .prompt-section').length;
-        attachmentsSummary.textContent = count > 0 ? `Attachments: ${count}` : '';
       }
 
       function markPromptDirty(event) {
@@ -607,7 +1423,7 @@
           </select>
           <select class="modelSelect"></select>
           <input class="modelId" placeholder="custom model id" style="display:none" />
-          <input class="agentName" placeholder="Agent name (optional)" style="width:160px"/>
+          <input class="agentName" placeholder="Agent name (optional)" style="width:180px"/>
           <span class="hint smartChoice"></span>
           <button type="button" class="optsToggle">Options</button>
           <button class="remove">Remove</button>
@@ -782,14 +1598,10 @@
       }
 
       function readTextAttachments() {
-        const rows = qa('#attachmentsContainer .prompt-section');
-        const out = [];
-        for (const r of rows) {
-          const title = q('.att-title', r)?.value || '';
-          const content = q('.att-content', r)?.value || '';
-          if ((content || '').trim().length) out.push({ title, content });
-        }
-        return out;
+        return attachedFiles.map(f => ({
+          title: f.name,
+          content: f.content
+        }));
       }
 
       function readSystemPrompts() {
@@ -853,6 +1665,9 @@
           addLog(`<div class='msg small'>Attachments: ${names.map(n => n.replace(/</g,'&lt;')).join(', ')}</div>`);
         }
 
+        // Clear input immediately
+        userMsgEl.value = '';
+
         const body = {
           conversationId: convIdEl.value.trim() || undefined,
           userMessage,
@@ -913,11 +1728,11 @@
             }
           }
           // Clear attachments after a successful send to avoid accidental reuse
-          if (attachmentsContainer) { attachmentsContainer.innerHTML = ''; updateAttachmentsSummary(); }
+          attachedFiles = [];
+          renderAttachments();
         } catch (e) {
           addLog(`<div class='result'><b>Error</b>: <code>${(e.message||e).replace(/</g,'&lt;')}</code></div>`);
         }
-        userMsgEl.value = '';
         userMsgEl.focus();
       };
 
@@ -999,6 +1814,14 @@
           }
         });
       }
+
+      // Enter key support
+      userMsgEl.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          q('#send').click();
+        }
+      });
     </script>
   </body>
-  </html>
+</html>
