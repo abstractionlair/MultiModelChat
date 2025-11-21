@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Track migrations
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS migrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
