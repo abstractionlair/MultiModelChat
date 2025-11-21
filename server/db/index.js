@@ -1,9 +1,19 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 const { ulid } = require('ulid');
 
 // Database file location
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', '..', 'data.db');
+
+// Storage directory for large files
+const STORAGE_DIR = process.env.STORAGE_DIR || path.join(__dirname, '..', '..', 'storage');
+
+// Ensure storage directory exists
+if (!fs.existsSync(STORAGE_DIR)) {
+  fs.mkdirSync(STORAGE_DIR, { recursive: true });
+  console.log('[db] Created storage directory:', STORAGE_DIR);
+}
 
 // Create/open database
 const db = new Database(DB_PATH);
@@ -39,4 +49,4 @@ process.on('SIGHUP', () => process.exit(128 + 1));
 process.on('SIGINT', () => process.exit(128 + 2));
 process.on('SIGTERM', () => process.exit(128 + 15));
 
-module.exports = { db, newId, getDefaultProjectId };
+module.exports = { db, newId, getDefaultProjectId, STORAGE_DIR };
