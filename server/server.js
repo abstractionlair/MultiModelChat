@@ -18,6 +18,10 @@ const { sendGoogle } = require('./adapters/google');
 const { sendXAI } = require('./adapters/xai');
 const { listAllModels } = require('./adapters/models');
 
+const { db, getDefaultProjectId } = require('./db/index');
+const { runMigrations } = require('./db/migrate');
+const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -25,7 +29,19 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cors());
 
 // In-memory store
-const conversations = new Map();
+// In-memory store
+let conversations = new Map();
+
+// Run migrations on startup
+runMigrations();
+
+// Migrate existing in-memory data (if any) to SQLite
+if (conversations.size > 0) {
+  migrateConversationsToSQLite(conversations);
+}
+
+// Load from SQLite (either just-migrated or existing data)
+conversations = loadConversationsFromSQLite();
 
 function newId(prefix = 'c') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random()
@@ -353,6 +369,20 @@ app.post('/api/turn', async (req, res) => {
       convId = newId('conv');
       conv = { id: convId, rounds: [], perModelState: {} };
       conversations.set(convId, conv);
+
+      // Insert into SQLite
+      const defaultProjectId = getDefaultProjectId();
+      db.prepare(`
+        INSERT INTO conversations (id, project_id, title, created_at, updated_at, round_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        convId,
+        defaultProjectId,
+        `Conversation ${convId}`,
+        Date.now(),
+        Date.now(),
+        0
+      );
     }
 
     // Start new round with the user's message
@@ -361,6 +391,34 @@ app.post('/api/turn', async (req, res) => {
       round.attachments = textAttachments.map((a) => ({ title: (a && a.title) || '', chars: (a && a.content ? String(a.content).length : 0) }));
     }
     conv.rounds.push(round);
+
+    // Persist to SQLite
+    const roundNum = conv.rounds.length;
+
+    // Insert user message
+    const userMsgId = newId('msg');
+    db.prepare(`
+      INSERT INTO conversation_messages (id, conversation_id, round_number, speaker, content, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userMsgId,
+      convId,
+      roundNum,
+      'user',
+      userMessage,
+      JSON.stringify({
+        ts: round.user.ts,
+        attachments: round.attachments
+      }),
+      round.user.ts
+    );
+
+    // Update conversation metadata
+    db.prepare(`
+      UPDATE conversations
+      SET updated_at = ?, round_count = ?
+      WHERE id = ?
+    `).run(Date.now(), roundNum, convId);
 
     if (dbg) {
       const attachCount = Array.isArray(textAttachments) ? textAttachments.length : 0;
@@ -406,13 +464,13 @@ app.post('/api/turn', async (req, res) => {
           searchCapableAgents.push(label);
         }
       }
-    } catch {}
+    } catch { }
     const capNote = searchCapableAgents.length
       ? (
-          'Capabilities: The following agents have live web search via Google grounding and can fetch current information with citations when asked: ' +
-          searchCapableAgents.map((n) => `[${n}]`).join(', ') +
-          '. If you lack web access and need a search, propose that these agents perform it.'
-        )
+        'Capabilities: The following agents have live web search via Google grounding and can fetch current information with citations when asked: ' +
+        searchCapableAgents.map((n) => `[${n}]`).join(', ') +
+        '. If you lack web access and need a search, propose that these agents perform it.'
+      )
       : '';
 
     // Fan-out to each target model in parallel
@@ -461,6 +519,26 @@ app.post('/api/turn', async (req, res) => {
           tokenUsage,
         };
         round.agents.push(msg);
+
+        // Persist agent message to SQLite
+        const agentMsgId = newId('msg');
+        db.prepare(`
+          INSERT INTO conversation_messages (id, conversation_id, round_number, speaker, content, metadata, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          agentMsgId,
+          convId,
+          roundNum,
+          msg.speaker,
+          msg.content,
+          JSON.stringify({
+            modelId: msg.modelId,
+            agentId: msg.agentId,
+            usage: msg.usage,
+            ts: msg.ts
+          }),
+          msg.ts
+        );
         const finishReason = result && result.meta && (result.meta.finish_reason || result.meta.finishReason || result.meta.stop_reason || (result.meta.promptFeedback && result.meta.promptFeedback.blockReason));
         if (dbg) {
           console.log('[turn] result', {
@@ -677,7 +755,7 @@ function debugEnabled(req) {
 }
 // Attachments save directory
 const TRANSCRIPTS_DIR = process.env.TRANSCRIPTS_DIR || path.join(__dirname, '..', 'transcripts');
-try { fs.mkdirSync(TRANSCRIPTS_DIR, { recursive: true }); } catch {}
+try { fs.mkdirSync(TRANSCRIPTS_DIR, { recursive: true }); } catch { }
 
 function asDate(ts) {
   try { return new Date(ts); } catch { return new Date(); }
