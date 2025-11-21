@@ -10,6 +10,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs').promises;
+const crypto = require('crypto');
 require('dotenv').config();
 
 const { sendOpenAI } = require('./adapters/openai');
@@ -19,10 +20,11 @@ const { sendXAI } = require('./adapters/xai');
 const { sendMock } = require('./adapters/mock');
 const { listAllModels } = require('./adapters/models');
 
-const { db, getDefaultProjectId } = require('./db/index');
+const { db, getDefaultProjectId, newId: newDbId } = require('./db/index');
 const { runMigrations } = require('./db/migrate');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
+const { indexFile } = require('./indexing/indexer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -364,6 +366,76 @@ function getAdapter(provider) {
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
+
+// POST /api/projects/:projectId/files
+// Minimal JSON upload endpoint used for indexing
+app.post('/api/projects/:projectId/files', async (req, res) => {
+  const { projectId } = req.params;
+  const { path: filePath, content, mimeType, metadata } = req.body || {};
+
+  if (!filePath || typeof filePath !== 'string') {
+    return res.status(400).json({ error: 'path is required' });
+  }
+
+  const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+  if (!project) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const now = Date.now();
+  const fileId = newDbId('file');
+  const fileContent = typeof content === 'string' ? content : '';
+  const sizeBytes = fileContent ? Buffer.byteLength(fileContent) : 0;
+  const contentHash = fileContent
+    ? crypto.createHash('sha256').update(fileContent).digest('hex')
+    : null;
+
+  try {
+    db.prepare(`
+      INSERT INTO project_files (
+        id, project_id, path, content, content_hash,
+        mime_type, size_bytes, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      fileId,
+      projectId,
+      filePath,
+      fileContent,
+      contentHash,
+      mimeType || 'text/plain',
+      sizeBytes,
+      metadata ? JSON.stringify(metadata) : null,
+      now,
+      now
+    );
+
+    const file = {
+      id: fileId,
+      project_id: projectId,
+      path: filePath,
+      content: fileContent,
+      content_hash: contentHash,
+      mime_type: mimeType || 'text/plain',
+      size_bytes: sizeBytes,
+      metadata: metadata || null,
+      created_at: now,
+      updated_at: now
+    };
+
+    res.status(201).json(file);
+
+    indexFile(fileId).catch(err => {
+      console.error('Background indexing failed:', err);
+    });
+  } catch (err) {
+    if (err && err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'File path already exists in this project' });
+    }
+    console.error('Failed to save file:', err);
+    return res.status(500).json({ error: 'Failed to save file' });
+  }
+});
 
 // POST /api/turn
 // Body: { conversationId?, userMessage: string, targetModels: [{ provider: 'openai'|'anthropic'|..., modelId: string, name?: string, agentId?: string, options?: object }], systemPrompts?: { common?: string, perProvider?: object, perAgent?: Record<agentId,string>, perModel?: string[] } }
