@@ -16,6 +16,7 @@ const { sendOpenAI } = require('./adapters/openai');
 const { sendAnthropic } = require('./adapters/anthropic');
 const { sendGoogle } = require('./adapters/google');
 const { sendXAI } = require('./adapters/xai');
+const { sendMock } = require('./adapters/mock');
 const { listAllModels } = require('./adapters/models');
 
 const { db, getDefaultProjectId } = require('./db/index');
@@ -59,6 +60,7 @@ const DEFAULT_MODELS = {
   anthropic: process.env.ANTHROPIC_DEFAULT_MODEL || 'claude-opus-4-1',
   google: process.env.GOOGLE_DEFAULT_MODEL || 'gemini-2.5-pro',
   xai: process.env.XAI_DEFAULT_MODEL || 'grok-4',
+  mock: 'mock-echo',
 };
 
 const DEFAULT_PROMPTS = {
@@ -73,6 +75,7 @@ const DEFAULT_PROMPTS = {
     anthropic: process.env.ANTHROPIC_DEFAULT_PROMPT || '',
     google: process.env.GOOGLE_DEFAULT_PROMPT || '',
     xai: process.env.XAI_DEFAULT_PROMPT || '',
+    mock: '',
   },
 };
 
@@ -126,7 +129,8 @@ function defaultOptions(provider) {
       return opts;
     }
     case 'google':
-    case 'xai': {
+    case 'xai':
+    case 'mock': {
       return maxTokens ? { maxTokens } : {};
     }
     default:
@@ -354,6 +358,8 @@ function getAdapter(provider) {
       return sendGoogle;
     case 'xai':
       return sendXAI;
+    case 'mock':
+      return sendMock;
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
@@ -503,6 +509,9 @@ app.post('/api/turn', async (req, res) => {
           const { system: sys, messages } = buildMessagesForAnthropic(conv, userMessage, modelId, agentId, system, textAttachments);
           result = await adapter({ model: modelId, system: sys, messages, options, providerState });
         } else if (provider === 'xai') {
+          const messages = buildMessagesForOpenAI(conv, userMessage, modelId, agentId, system, textAttachments);
+          result = await adapter({ model: modelId, messages, options, providerState });
+        } else if (provider === 'mock') {
           const messages = buildMessagesForOpenAI(conv, userMessage, modelId, agentId, system, textAttachments);
           result = await adapter({ model: modelId, messages, options, providerState });
         } else {
@@ -743,6 +752,9 @@ app.post('/api/preview-view', (req, res) => {
     } else if (provider === 'anthropic' || provider === 'google') {
       const { system: sys, messages } = buildMessagesForAnthropic(convCopy, userMessage || '', modelId, agentId, system, textAttachments);
       view = { system: sys, messages };
+    } else if (provider === 'mock') {
+      const messages = buildMessagesForOpenAI(convCopy, userMessage || '', modelId, agentId, system, textAttachments);
+      view = { messages };
     } else {
       return res.status(400).json({ error: 'unsupported_provider' });
     }
@@ -766,6 +778,7 @@ app.get('/api/models', async (req, res) => {
         anthropic: systemPrompts.perProvider.anthropic || '',
         google: systemPrompts.perProvider.google || '',
         xai: systemPrompts.perProvider.xai || '',
+        mock: systemPrompts.perProvider.mock || '',
       },
     };
     data.activeModels = activeModels;

@@ -1,136 +1,146 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Multi-Model Command Center</title>
-    <link rel="stylesheet" href="style.css">
-  </head>
-  <body>
-    <div class="container">
-      <header>
-        <h1>⬢ Multi-Model Command Center</h1>
-        <div class="subtitle">Parallel AI Model Orchestration System</div>
-      </header>
 
-      <!-- Configuration Section -->
-      <div class="config-section">
-        <button id="toggleConfig" class="config-toggle" aria-expanded="false">
-          ⚙ Configuration
-        </button>
-        <div id="configPanel" class="config-panel is-hidden">
-          
-          <!-- Session Control -->
-          <div class="control-group" style="border-bottom: 1px solid var(--border-light); padding-bottom: 1rem; margin-bottom: 1rem;">
-            <div style="flex: 1;">
-              <label>Conversation ID</label><br>
-              <input id="convId" type="text" placeholder="(New Session)" style="width: 100%; max-width: 300px;" />
-            </div>
-            <div style="align-self: flex-end;">
-              <button id="reset">Reset Session</button>
-            </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Multi-Model Command Center</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>⬢ Multi-Model Command Center</h1>
+      <div class="subtitle">Parallel AI Model Orchestration System</div>
+    </header>
+
+    <!-- Configuration Section -->
+    <div class="config-section">
+      <button id="toggleConfig" class="config-toggle" aria-expanded="false">
+        ⚙ Configuration
+      </button>
+      <div id="configPanel" class="config-panel is-hidden">
+
+        <!-- Session Control -->
+        <div class="control-group"
+          style="border-bottom: 1px solid var(--border-light); padding-bottom: 1rem; margin-bottom: 1rem;">
+          <div style="flex: 1;">
+            <label>Conversation ID</label><br>
+            <input id="convId" type="text" placeholder="(New Session)" style="width: 100%; max-width: 300px;" />
           </div>
-
-          <!-- Model Configuration -->
-          <div class="control-group">
-            <div style="flex: 1;">
-              <label for="modelCount">Active Models</label><br>
-              <input id="modelCount" type="number" min="1" max="12" value="2" style="width: 80px;" />
-              <button id="addModel" class="btn-primary" style="margin-left: 8px;">+ Add Model</button>
-              <button id="refreshModels">⟳ Refresh</button>
-            </div>
+          <div style="align-self: flex-end;">
+            <button id="reset">Reset Session</button>
           </div>
-
-          <div class="models-list">
-            <!-- Rows injected by app.js -->
-          </div>
-
-          <!-- System Prompts -->
-          <div style="margin-top: 1.5rem;">
-            <button id="togglePrompts" style="width: 100%; text-align: left; background: rgba(0,0,0,0.2);">
-              📝 System Prompts
-            </button>
-            <div id="promptPanel" class="is-hidden" style="margin-top: 1rem; padding: 1rem; background: rgba(0,0,0,0.2); border-radius: 8px;">
-              <div style="margin-bottom: 1rem;">
-                <label for="promptCommon">Common System Prompt</label>
-                <textarea id="promptCommon" style="width: 100%; min-height: 100px;" placeholder="Use {{modelId}} to reference the resolved model."></textarea>
-                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Applies to every provider. {{modelId}} is replaced with the resolved model id.</div>
-              </div>
-              <div>
-                <label>Model-Specific Prompts</label>
-                <div id="modelPromptList"></div>
-              </div>
-            </div>
-          </div>
-
         </div>
-      </div>
 
-      <!-- Advanced Options -->
-      <div class="config-section">
-        <button id="toggleAdvanced" class="config-toggle" aria-expanded="false">
-          🛠 Advanced Options
-        </button>
-        <div id="advancedPanel" class="config-panel config-content is-hidden">
-          
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
-            <!-- Debug & Preview -->
+        <!-- Model Configuration -->
+        <div class="control-group">
+          <div style="flex: 1;">
+            <label for="modelCount">Active Models</label><br>
+            <input id="modelCount" type="number" min="1" max="12" value="2" style="width: 80px;" />
+            <button id="addModel" class="btn-primary" style="margin-left: 8px;">+ Add Model</button>
+            <button id="refreshModels">⟳ Refresh</button>
+          </div>
+        </div>
+
+        <div class="models-list">
+          <!-- Rows injected by app.js -->
+        </div>
+
+        <!-- System Prompts -->
+        <div style="margin-top: 1.5rem;">
+          <button id="togglePrompts" style="width: 100%; text-align: left; background: rgba(0,0,0,0.2);">
+            📝 System Prompts
+          </button>
+          <div id="promptPanel" class="is-hidden"
+            style="margin-top: 1rem; padding: 1rem; background: rgba(0,0,0,0.2); border-radius: 8px;">
+            <div style="margin-bottom: 1rem;">
+              <label for="promptCommon">Common System Prompt</label>
+              <textarea id="promptCommon" style="width: 100%; min-height: 100px;"
+                placeholder="Use {{modelId}} to reference the resolved model."></textarea>
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Applies to every provider.
+                {{modelId}} is replaced with the resolved model id.</div>
+            </div>
             <div>
-              <label style="display: block; margin-bottom: 0.5rem;">Debug & Preview</label>
-              <div style="margin-bottom: 1rem;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                  <input id="debugToggle" type="checkbox" /> Enable Debug Mode
-                </label>
-              </div>
-              <div class="control-group">
-                <select id="previewProvider">
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="google">Google</option>
-                  <option value="xai">xAI</option>
-                </select>
-                <select id="previewModel" style="flex: 1;"></select>
-              </div>
-              <div class="control-group">
-                <button id="previewBtn">Generate Preview</button>
-                <button id="previewCopy">Copy</button>
-              </div>
-              <pre id="previewOut" style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; overflow: auto; max-height: 200px; font-size: 0.8rem;"></pre>
-            </div>
-
-            <!-- Export & Auto-Save -->
-            <div>
-              <label style="display: block; margin-bottom: 0.5rem;">Export & Auto-Save</label>
-              <div class="control-group">
-                <button id="downloadMd">↓ Download Markdown</button>
-              </div>
-              <div style="margin-top: 1rem;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                  <input id="autoSaveToggle" type="checkbox" /> Auto-save to server (Markdown)
-                </label>
-                <div id="autoSaveNote" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;"></div>
-              </div>
+              <label>Model-Specific Prompts</label>
+              <div id="modelPromptList"></div>
             </div>
           </div>
-
         </div>
+
       </div>
-
-      <!-- Chat Area -->
-      <div id="log" class="chat-log"></div>
-
-      <!-- Input Area -->
-      <div class="input-area">
-        <div id="attachmentsPreview" class="attachments"></div>
-        <div class="input-row">
-          <button id="attachBtn" title="Attach files" style="padding: 0 1rem; font-size: 1.2rem;">+</button>
-          <input id="attachmentFileInput" type="file" multiple accept="text/*,.txt,.md,.markdown,.json,.csv,.log,.yaml,.yml,.html" style="display:none" />
-          <input id="userMsg" type="text" placeholder="Enter command..." autocomplete="off" />
-          <button id="send" class="btn-primary">Send ▸</button>
-        </div>
-      </div>
-
     </div>
-    <script src="app.js"></script>
-  </body>
+
+    <!-- Advanced Options -->
+    <div class="config-section">
+      <button id="toggleAdvanced" class="config-toggle" aria-expanded="false">
+        🛠 Advanced Options
+      </button>
+      <div id="advancedPanel" class="config-panel config-content is-hidden">
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+          <!-- Debug & Preview -->
+          <div>
+            <label style="display: block; margin-bottom: 0.5rem;">Debug & Preview</label>
+            <div style="margin-bottom: 1rem;">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input id="debugToggle" type="checkbox" /> Enable Debug Mode
+              </label>
+            </div>
+            <div class="control-group">
+              <select id="previewProvider">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="google">Google</option>
+                <option value="xai">xAI</option>
+                <option value="mock">Mock</option>
+              </select>
+              <select id="previewModel" style="flex: 1;"></select>
+            </div>
+            <div class="control-group">
+              <button id="previewBtn">Generate Preview</button>
+              <button id="previewCopy">Copy</button>
+            </div>
+            <pre id="previewOut"
+              style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; overflow: auto; max-height: 200px; font-size: 0.8rem;"></pre>
+          </div>
+
+          <!-- Export & Auto-Save -->
+          <div>
+            <label style="display: block; margin-bottom: 0.5rem;">Export & Auto-Save</label>
+            <div class="control-group">
+              <button id="downloadMd">↓ Download Markdown</button>
+            </div>
+            <div style="margin-top: 1rem;">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input id="autoSaveToggle" type="checkbox" /> Auto-save to server (Markdown)
+              </label>
+              <div id="autoSaveNote" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Chat Area -->
+    <div id="log" class="chat-log"></div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+      <div id="attachmentsPreview" class="attachments"></div>
+      <div class="input-row">
+        <button id="attachBtn" title="Attach files" style="padding: 0 1rem; font-size: 1.2rem;">+</button>
+        <input id="attachmentFileInput" type="file" multiple
+          accept="text/*,.txt,.md,.markdown,.json,.csv,.log,.yaml,.yml,.html" style="display:none" />
+        <input id="userMsg" type="text" placeholder="Enter command..." autocomplete="off" />
+        <button id="send" class="btn-primary">Send ▸</button>
+      </div>
+    </div>
+
+  </div>
+  <script src="app.js?v=3"></script>
+</body>
+
 </html>

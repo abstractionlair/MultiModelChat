@@ -56,13 +56,13 @@ function formatTokenUsage(info) {
   } else if (used !== undefined) {
     pieces.push(`${used} toks`);
   }
-  
+
   const detail = [];
   if (input !== undefined) detail.push(`in ${input}`);
   if (output !== undefined) detail.push(`out ${output}`);
   if (thinking !== undefined) detail.push(`think ${thinking}`);
   if (detail.length) pieces.push(`(${detail.join(', ')})`);
-  
+
   if (!pieces.length) return '';
   return `<span class='tokens'>${pieces.join(' ')}</span>`;
 }
@@ -298,26 +298,26 @@ function populateModelSelect(row, preserve = false) {
   const provider = q('.provider', row)?.value || 'openai';
   const sel = q('select.modelSelect', row);
   const customInput = q('input.modelId', row);
-  
+
   let previous = sel ? sel.value : undefined;
   if (previous === '__custom__') {
     const prevCustom = q('.modelId', row)?.value?.trim();
     if (prevCustom) previous = prevCustom;
   }
-  
+
   sel.innerHTML = '';
-  
+
   // Smart option
   const optSmart = document.createElement('option');
   optSmart.value = 'smart';
   optSmart.textContent = smartLabelFor(provider);
   sel.appendChild(optSmart);
-  
+
   // Separator
   const sep = document.createElement('option');
   sep.disabled = true; sep.textContent = '──────────';
   sel.appendChild(sep);
-  
+
   // Models
   const list = getProviderModels(provider);
   for (const m of list) {
@@ -329,7 +329,7 @@ function populateModelSelect(row, preserve = false) {
     o.textContent = t;
     sel.appendChild(o);
   }
-  
+
   // Custom
   const optCustom = document.createElement('option');
   optCustom.value = '__custom__';
@@ -350,7 +350,7 @@ function populateModelSelect(row, preserve = false) {
     sel.value = 'smart';
     customInput.style.display = 'none';
   }
-  
+
   renderOptionsPanel(row);
   applyModelPromptDefault(row);
   updateModelPromptLabel(row);
@@ -366,7 +366,7 @@ function wireRowEvents(row) {
       refreshPromptLabels();
     };
   }
-  
+
   const providerSelect = q('.provider', row);
   if (providerSelect) {
     providerSelect.addEventListener('change', () => {
@@ -376,7 +376,7 @@ function wireRowEvents(row) {
     // Set initial provider
     row.dataset.provider = providerSelect.value;
   }
-  
+
   const modelSelect = q('select.modelSelect', row);
   if (modelSelect) {
     modelSelect.addEventListener('change', (e) => {
@@ -391,13 +391,13 @@ function wireRowEvents(row) {
       updateModelPromptLabel(row);
     });
   }
-  
+
   const customInput = q('input.modelId', row);
   if (customInput) customInput.addEventListener('input', () => updateModelPromptLabel(row));
-  
+
   const agentNameInput = q('.agentName', row);
   if (agentNameInput) agentNameInput.addEventListener('input', () => updateModelPromptLabel(row));
-  
+
   const toggle = q('.optsToggle', row);
   if (toggle) {
     toggle.addEventListener('click', () => {
@@ -412,8 +412,8 @@ function wireRowEvents(row) {
 function makeModelRow() {
   const row = document.createElement('div');
   row.className = 'model-row';
-  row.dataset.agentId = `agent-${Math.random().toString(36).slice(2,10)}`;
-  
+  row.dataset.agentId = `agent-${Math.random().toString(36).slice(2, 10)}`;
+
   row.innerHTML = `
     <div class="control-group" style="margin-bottom: 0.5rem;">
       <select class="provider">
@@ -421,6 +421,7 @@ function makeModelRow() {
         <option value="anthropic">Anthropic</option>
         <option value="google">Google</option>
         <option value="xai">xAI</option>
+        <option value="mock">Mock</option>
       </select>
       <select class="modelSelect" style="flex: 1; min-width: 200px;"></select>
       <input class="modelId" placeholder="Custom model ID" style="display:none; flex: 1;" />
@@ -432,7 +433,7 @@ function makeModelRow() {
       <div class="optsBody"></div>
     </div>
   `;
-  
+
   wireRowEvents(row);
   populateModelSelect(row);
   return row;
@@ -442,7 +443,7 @@ function renderOptionsPanel(row) {
   const provider = q('.provider', row)?.value || 'openai';
   const body = q('.optsBody', row);
   if (!body) return;
-  
+
   const common = `
     <div class="control-group">
       <div>
@@ -463,7 +464,7 @@ function renderOptionsPanel(row) {
       </div>
     </div>
   `;
-  
+
   let providerSpecific = '';
   if (provider === 'openai') {
     providerSpecific = `
@@ -547,8 +548,17 @@ function renderOptionsPanel(row) {
         </div>
       </div>
     `;
+
+  } else if (provider === 'mock') {
+    providerSpecific = `
+      <div class="control-group">
+        <div style="padding: 8px; color: var(--text-muted); font-size: 0.9rem;">
+          Mock provider for testing. Select a model to simulate different behaviors.
+        </div>
+      </div>
+      `;
   }
-  
+
   body.innerHTML = common + providerSpecific;
 }
 
@@ -556,12 +566,12 @@ function syncRowsToCount() {
   const desired = Math.max(1, Math.min(12, parseInt(modelCountEl.value || '1', 10)));
   const container = q('.models-list');
   const rows = getModelRows();
-  
+
   if (rows.length < desired) {
     for (let i = rows.length; i < desired; i++) container.appendChild(makeModelRow());
   } else if (rows.length > desired) {
     for (let i = rows.length; i > desired; i--) {
-      const row = rows[i-1];
+      const row = rows[i - 1];
       removePromptField(row);
       row.remove();
     }
@@ -688,7 +698,7 @@ function readModels() {
     let modelId = q('select.modelSelect', r)?.value;
     if (modelId === '__custom__') modelId = q('.modelId', r)?.value?.trim();
     if (!modelId) modelId = 'smart';
-    
+
     if (provider && modelId) {
       const options = buildOptionsForRow(r, provider);
       const entry = { provider, modelId };
@@ -715,11 +725,11 @@ async function loadModelsIndex() {
     console.warn('Failed to load /api/models:', e);
     MODEL_INDEX = { defaults: {}, providers: {}, prompts: { common: LOCAL_DEFAULT_PROMPT, perProvider: {} } };
   }
-  
+
   if (!MODEL_INDEX.defaults) MODEL_INDEX.defaults = {};
   if (!MODEL_INDEX.providers) MODEL_INDEX.providers = {};
   if (!MODEL_INDEX.prompts) MODEL_INDEX.prompts = { common: LOCAL_DEFAULT_PROMPT, perProvider: {} };
-  
+
   // Apply defaults
   if (promptCommonEl && !promptCommonEl.dataset.dirty) {
     promptCommonEl.value = MODEL_INDEX.prompts.common || LOCAL_DEFAULT_PROMPT;
@@ -745,17 +755,17 @@ function findPreviewAgentId(provider, modelId) {
 function populatePreviewModel() {
   const provider = previewProviderEl?.value || 'openai';
   if (!previewModelEl) return;
-  
+
   previewModelEl.innerHTML = '';
   const optSmart = document.createElement('option');
   optSmart.value = 'smart';
   optSmart.textContent = smartLabelFor(provider);
   previewModelEl.appendChild(optSmart);
-  
+
   const sep = document.createElement('option');
   sep.disabled = true; sep.textContent = '──────────';
   previewModelEl.appendChild(sep);
-  
+
   const list = getProviderModels(provider);
   for (const m of list) {
     const o = document.createElement('option');
@@ -790,19 +800,19 @@ q('#reset').onclick = () => { convIdEl.value = ''; log.innerHTML = ''; };
 q('#send').onclick = async () => {
   const userMessage = userMsgEl.value.trim();
   if (!userMessage) return;
-  
+
   const targetModels = readModels();
   if (!targetModels.length) { alert('Add at least one model'); return; }
 
   addLog(`
-    <div class="msg-header"><b>User</b></div>
-    <div class="msg-content">${userMessage.replace(/</g,'&lt;')}</div>
-  `, 'user');
+      <div class="msg-header"><b>User</b></div>
+        <div class="msg-content">${userMessage.replace(/</g, '&lt;')}</div>
+    `, 'user');
 
   const attsForLog = readTextAttachments();
   if (attsForLog.length) {
     const names = attsForLog.map(a => (a.title || '').trim() || 'untitled');
-    addLog(`<div class='small'>Attachments: ${names.map(n => n.replace(/</g,'&lt;')).join(', ')}</div>`, 'user');
+    addLog(`<div class='small'>Attachments: ${names.map(n => n.replace(/</g, '&lt;')).join(', ')}</div>`, 'user');
   }
 
   // Show loading indicator
@@ -810,13 +820,13 @@ q('#send').onclick = async () => {
   loadingMsg.className = 'msg loading';
   loadingMsg.id = 'loading-indicator';
   loadingMsg.innerHTML = `
-    <span style="font-family: var(--font-display); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Thinking</span>
-    <div class="loading-dots">
-      <span></span>
-      <span></span>
-      <span></span>
-    </div>
-  `;
+      <span style="font-family: var(--font-display); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Thinking</span>
+        <div class="loading-dots">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+    `;
   log.appendChild(loadingMsg);
   log.scrollTop = log.scrollHeight;
 
@@ -907,8 +917,8 @@ q('#send').onclick = async () => {
                   let citsHtml = '';
                   if (citations.length) {
                     const items = citations.slice(0, 6).map(c => {
-                      const url = (c.uri||'').replace(/\"/g,'&quot;');
-                      const label = (c.title || url || '').replace(/</g,'&lt;');
+                      const url = (c.uri || '').replace(/\"/g, '&quot;');
+                      const label = (c.title || url || '').replace(/</g, '&lt;');
                       return `<a href="${url}" target="_blank" rel="nofollow noopener">${label}</a>`;
                     });
                     citsHtml = `<div class='small' style='margin-top:6px; opacity:0.7;'>Citations: ${items.join(' • ')}</div>`;
@@ -916,7 +926,7 @@ q('#send').onclick = async () => {
 
                   addLog(`
                     <div class="msg-header"><b>${headerName}</b> ${headerExtras}</div>
-                    <div class="msg-content">${text.replace(/</g,'&lt;')}</div>
+                    <div class="msg-content">${text.replace(/</g, '&lt;')}</div>
                     ${citsHtml}
                   `, 'agent');
                 }
@@ -1046,4 +1056,8 @@ userMsgEl.addEventListener('keypress', (e) => {
   syncCountToRows();
   populatePreviewModel();
   if (previewProviderEl) previewProviderEl.addEventListener('change', populatePreviewModel);
+
+  // Expose for testing
+  window.MODEL_INDEX = MODEL_INDEX;
+  window.populatePreviewModel = populatePreviewModel;
 })();

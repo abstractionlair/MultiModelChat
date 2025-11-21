@@ -3,7 +3,7 @@ const { getPath } = require('../utils/nested');
 let fetchFn = globalThis.fetch;
 try {
   if (!fetchFn) fetchFn = require('undici').fetch;
-} catch {}
+} catch { }
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -105,12 +105,25 @@ async function listXAIModels() {
   }
 }
 
+async function listMockModels() {
+  return {
+    available: true,
+    models: [
+      { id: 'mock-echo', displayName: 'Mock Echo' },
+      { id: 'mock-lorem', displayName: 'Mock Lorem Ipsum' },
+      { id: 'mock-slow', displayName: 'Mock Slow (2s)' },
+      { id: 'mock-error', displayName: 'Mock Error' },
+    ]
+  };
+}
+
 async function listAllModels(defaults) {
-  const [openai, anthropic, google, xai] = await Promise.all([
+  const [openai, anthropic, google, xai, mock] = await Promise.all([
     listOpenAIModels(),
     listAnthropicModels(),
     listGoogleModels(),
     listXAIModels(),
+    listMockModels(),
   ]);
   return {
     defaults: defaults || {},
@@ -119,6 +132,7 @@ async function listAllModels(defaults) {
       anthropic,
       google,
       xai,
+      mock,
     },
   };
 }
