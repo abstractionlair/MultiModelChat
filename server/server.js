@@ -10,6 +10,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs').promises;
+const crypto = require('crypto');
 require('dotenv').config();
 
 const { sendOpenAI } = require('./adapters/openai');
@@ -19,15 +20,16 @@ const { sendXAI } = require('./adapters/xai');
 const { sendMock } = require('./adapters/mock');
 const { listAllModels } = require('./adapters/models');
 
-const { db, getDefaultProjectId } = require('./db/index');
+const { db, getDefaultProjectId, newId: newDbId, STORAGE_DIR, STORAGE_THRESHOLD } = require('./db/index');
 const { runMigrations } = require('./db/migrate');
+const { validatePath, computeHash, detectMimeType } = require('./utils/files');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
 // In-memory store
@@ -364,6 +366,263 @@ function getAdapter(provider) {
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
+
+// ============================================================================
+// File APIs
+// ============================================================================
+
+/**
+ * POST /api/projects/:projectId/files
+ * Upload or update a file
+ */
+app.post('/api/projects/:projectId/files', async (req, res) => {
+  const { projectId } = req.params;
+  const { path: filePath, content, metadata } = req.body;
+
+  try {
+    // Validate inputs
+    if (!filePath || content === undefined) {
+      return res.status(400).json({ error: 'path and content are required' });
+    }
+
+    const validPath = validatePath(filePath);
+
+    // Check project exists
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'project_not_found' });
+    }
+
+    // Size check
+    const sizeBytes = Buffer.byteLength(content, 'utf8');
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (sizeBytes > MAX_FILE_SIZE) {
+      return res.status(413).json({ error: 'file_too_large', max_bytes: MAX_FILE_SIZE });
+    }
+
+    // Compute hash
+    const contentHash = computeHash(content);
+
+    // Detect MIME type
+    const mimeType = detectMimeType(validPath);
+
+    // Prepare metadata
+    const metadataStr = metadata ? JSON.stringify(metadata) : JSON.stringify({
+      retrieval_eligible: true,
+      tool_accessible: true
+    });
+
+    const now = Date.now();
+
+    // Decide storage location
+    let fileContent = null;
+    let contentLocation = null;
+
+    if (sizeBytes < STORAGE_THRESHOLD) {
+      // Store in DB
+      fileContent = content;
+    } else {
+      // Store on disk
+      const storageId = crypto.randomBytes(16).toString('hex');
+      contentLocation = path.join(STORAGE_DIR, storageId);
+      await fsp.writeFile(contentLocation, content, 'utf8');
+    }
+
+    // Upsert file
+    const fileId = newDbId('file');
+    const result = db.prepare(`
+      INSERT INTO project_files (
+        id, project_id, path, content, content_location, content_hash,
+        mime_type, size_bytes, metadata, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, path) DO UPDATE SET
+        content = excluded.content,
+        content_location = excluded.content_location,
+        content_hash = excluded.content_hash,
+        size_bytes = excluded.size_bytes,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `).run(
+      fileId,
+      projectId,
+      validPath,
+      fileContent,
+      contentLocation,
+      contentHash,
+      mimeType,
+      sizeBytes,
+      metadataStr,
+      now,
+      now
+    );
+
+    // Get the file (in case of conflict, use existing ID)
+    const file = db.prepare(`
+      SELECT id, path, size_bytes, content_hash, created_at
+      FROM project_files
+      WHERE project_id = ? AND path = ?
+    `).get(projectId, validPath);
+
+    res.status(201).json(file);
+
+  } catch (err) {
+    console.error('File upload error:', err);
+    res.status(500).json({ error: 'upload_failed', message: err.message });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/files
+ * List files in project
+ */
+app.get('/api/projects/:projectId/files', (req, res) => {
+  const { projectId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const offset = parseInt(req.query.offset) || 0;
+  const filter = req.query.filter; // e.g., "*.md" or "docs/*"
+
+  try {
+    // Check project exists
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'project_not_found' });
+    }
+
+    // Build query
+    let query = `
+      SELECT id, path, mime_type, size_bytes, created_at, updated_at
+      FROM project_files
+      WHERE project_id = ?
+    `;
+    const params = [projectId];
+
+    // Simple filter support (LIKE pattern)
+    if (filter) {
+      const pattern = filter.replace(/\*/g, '%');
+      query += ` AND path LIKE ?`;
+      params.push(pattern);
+    }
+
+    query += ` ORDER BY path ASC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    const files = db.prepare(query).all(...params);
+
+    // Get total count
+    let countQuery = 'SELECT COUNT(*) as count FROM project_files WHERE project_id = ?';
+    const countParams = [projectId];
+    if (filter) {
+      const pattern = filter.replace(/\*/g, '%');
+      countQuery += ' AND path LIKE ?';
+      countParams.push(pattern);
+    }
+    const { count } = db.prepare(countQuery).get(...countParams);
+
+    res.json({
+      files,
+      total: count,
+      limit,
+      offset
+    });
+
+  } catch (err) {
+    console.error('File list error:', err);
+    res.status(500).json({ error: 'list_failed', message: err.message });
+  }
+});
+
+/**
+ * GET /api/projects/:projectId/files/:fileId
+ * Get file content and metadata
+ */
+app.get('/api/projects/:projectId/files/:fileId', async (req, res) => {
+  const { projectId, fileId } = req.params;
+
+  try {
+    const file = db.prepare(`
+      SELECT *
+      FROM project_files
+      WHERE id = ? AND project_id = ?
+    `).get(fileId, projectId);
+
+    if (!file) {
+      return res.status(404).json({ error: 'file_not_found' });
+    }
+
+    // Load content
+    let content = file.content;
+    if (!content && file.content_location) {
+      content = await fsp.readFile(file.content_location, 'utf8');
+    }
+
+    // Parse metadata
+    const metadata = file.metadata ? JSON.parse(file.metadata) : {};
+
+    res.json({
+      id: file.id,
+      path: file.path,
+      content,
+      mime_type: file.mime_type,
+      size_bytes: file.size_bytes,
+      content_hash: file.content_hash,
+      metadata,
+      created_at: file.created_at,
+      updated_at: file.updated_at
+    });
+
+  } catch (err) {
+    console.error('File read error:', err);
+    res.status(500).json({ error: 'read_failed', message: err.message });
+  }
+});
+
+/**
+ * DELETE /api/projects/:projectId/files/:fileId
+ * Delete a file
+ */
+app.delete('/api/projects/:projectId/files/:fileId', async (req, res) => {
+  const { projectId, fileId } = req.params;
+
+  try {
+    // Get file info (to delete disk file if needed)
+    const file = db.prepare(`
+      SELECT content_location
+      FROM project_files
+      WHERE id = ? AND project_id = ?
+    `).get(fileId, projectId);
+
+    if (!file) {
+      return res.status(404).json({ error: 'file_not_found' });
+    }
+
+    // Delete from DB (triggers will clean up chunks and FTS index)
+    const result = db.prepare(`
+      DELETE FROM project_files
+      WHERE id = ? AND project_id = ?
+    `).run(fileId, projectId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'file_not_found' });
+    }
+
+    // Delete disk file if it exists
+    if (file.content_location) {
+      try {
+        await fsp.unlink(file.content_location);
+      } catch (err) {
+        console.error('Failed to delete disk file:', err);
+        // Continue anyway - DB record is deleted
+      }
+    }
+
+    res.json({ ok: true, deleted: fileId });
+
+  } catch (err) {
+    console.error('File delete error:', err);
+    res.status(500).json({ error: 'delete_failed', message: err.message });
+  }
+});
 
 // POST /api/turn
 // Body: { conversationId?, userMessage: string, targetModels: [{ provider: 'openai'|'anthropic'|..., modelId: string, name?: string, agentId?: string, options?: object }], systemPrompts?: { common?: string, perProvider?: object, perAgent?: Record<agentId,string>, perModel?: string[] } }
