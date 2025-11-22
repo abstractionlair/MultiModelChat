@@ -26,6 +26,7 @@ const { runMigrations } = require('./db/migrate');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
 const { indexFile } = require('./indexing/indexer');
+const { search } = require('./indexing/search');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -626,6 +627,39 @@ app.delete('/api/projects/:projectId/files/:fileId', async (req, res) => {
   } catch (err) {
     console.error('File delete error:', err);
     res.status(500).json({ error: 'delete_failed', message: err.message });
+  }
+});
+
+// ============================================================================
+// Search API
+// ============================================================================
+
+/**
+ * POST /api/projects/:projectId/search
+ * Search for content in project files and conversations
+ */
+app.post('/api/projects/:projectId/search', (req, res) => {
+  const { projectId } = req.params;
+  const { query, filters, limit, offset } = req.body;
+
+  try {
+    // Validate query
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      return res.status(400).json({ error: 'query is required' });
+    }
+
+    // Execute search
+    const results = search(projectId, query, { filters, limit, offset });
+
+    res.json(results);
+
+  } catch (err) {
+    if (err.message === 'Project not found') {
+      return res.status(404).json({ error: 'project_not_found' });
+    }
+
+    console.error('Search error:', err);
+    res.status(500).json({ error: 'search_failed', message: err.message });
   }
 });
 
