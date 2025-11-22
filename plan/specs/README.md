@@ -32,22 +32,22 @@ Each spec is scoped to **one coding session** and **one pull request**. They inc
 
 | Step | Name | Status |
 |------|------|--------|
-| 00 | **Write Phase 1b Specs** | 📝 TODO |
-| 07 | File Storage Schema | 📝 TODO |
-| 08 | File Upload/Read APIs | 📝 TODO |
-| 09 | Chunking & Indexing | 📝 TODO |
-| 10 | FTS5 Search Endpoint | 📝 TODO |
-| 11 | Update System Prompts | 📝 TODO |
+| [00](./00-write-phase-1b-specs.md) | **Write Phase 1b Specs** | ✓ Done |
+| [07](./07-file-storage.md) | File Storage Schema | ✓ Done |
+| [08](./08-file-apis.md) | File Upload/Read APIs | ✓ Done |
+| [09](./09-chunking-indexing.md) | Chunking & Indexing | ✓ Done |
+| [10](./10-search-endpoint.md) | FTS5 Search Endpoint | ✓ Done |
+| [11](./11-system-prompts.md) | Update System Prompts | ✓ Done |
 
 ### Phase 1c: Code Execution (Optional)
 
 | Step | Name | Status |
 |------|------|--------|
-| 00 | **Write Phase 1c Specs** | 📝 TODO |
-| 12 | Pyodide Integration | 📝 TODO |
-| 13 | Filesystem Materialization | 📝 TODO |
-| 14 | Tool Persistence | 📝 TODO |
-| 15 | Code Execution in API | 📝 TODO |
+| [00](./00-write-phase-1c-specs.md) | **Write Phase 1c Specs** | ✓ Done |
+| [12](./12-bash-execution-runtime.md) | Bash Execution Runtime | ✅ Ready |
+| [13](./13-filesystem-materialization.md) | Filesystem Materialization | ✅ Ready |
+| [14](./14-auto-indexing.md) | Auto-Indexing | ✅ Ready |
+| [15](./15-execution-in-turn.md) | Integration in /api/turn | ✅ Ready |
 
 ### Phase 2: Enhanced Retrieval
 

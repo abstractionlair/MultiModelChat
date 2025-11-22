@@ -23,10 +23,10 @@ Phase 1b: Files & Retrieval (Week 2)
 └─ 11: Update system prompts
 
 Phase 1c: Code Execution (Week 3-4, Optional)
-├─ 12: Pyodide integration
+├─ 12: Bash execution runtime
 ├─ 13: Filesystem materialization
-├─ 14: Tool persistence
-└─ 15: Execution in /api/turn
+├─ 14: Auto-indexing
+└─ 15: Integration in /api/turn
 
 Phase 2: Enhanced Retrieval (Week 5+)
 ├─ 16: Token budget management
@@ -59,10 +59,10 @@ graph TD
     09 --> 10
     10 --> 11[11: System Prompts]
 
-    11 --> 12[12: Pyodide]
+    11 --> 12[12: Bash Runtime]
     12 --> 13[13: Materialization]
-    13 --> 14[14: Tool Persistence]
-    14 --> 15[15: Code in /api/turn]
+    13 --> 14[14: Auto-Indexing]
+    14 --> 15[15: Integration in /api/turn]
 ```
 
 ## Phase 1a: Foundations (Week 1)
@@ -97,17 +97,17 @@ graph TD
 
 ## Phase 1c: Code Execution (Weeks 3-4, Optional)
 
-**Goal**: Enable Python code execution for smart models with tool persistence.
+**Goal**: Enable bash-based code execution (Python/JavaScript) with auto-indexing of created files.
 
 | Step | Name | Spec | Complexity | Can Parallelize |
 |------|------|------|------------|-----------------|
 | **00** | **Write Phase 1c Specs** | [specs/00-write-phase-1c-specs.md](specs/00-write-phase-1c-specs.md) | **Low (1-2h)** | **Start of phase** |
-| 12 | Pyodide Integration | [specs/12-pyodide.md](specs/12-pyodide.md) | High | After spec writing |
-| 13 | Filesystem Materialization | [specs/13-materialization.md](specs/13-materialization.md) | Medium | After 12 |
-| 14 | Tool Persistence | [specs/14-tool-persistence.md](specs/14-tool-persistence.md) | Medium | After 13 |
-| 15 | Execution in API | [specs/15-code-in-api.md](specs/15-code-in-api.md) | High | After 14 |
+| 12 | Bash Execution Runtime | [specs/12-bash-execution-runtime.md](specs/12-bash-execution-runtime.md) | Medium | After spec writing |
+| 13 | Filesystem Materialization | [specs/13-filesystem-materialization.md](specs/13-filesystem-materialization.md) | Low | After 12 |
+| 14 | Auto-Indexing | [specs/14-auto-indexing.md](specs/14-auto-indexing.md) | Medium | After 13 |
+| 15 | Integration in /api/turn | [specs/15-execution-in-turn.md](specs/15-execution-in-turn.md) | Medium | After 14 |
 
-**Deliverable**: Models can execute Python, read project files, create tools that persist.
+**Deliverable**: Models execute code via bash tool, create/modify files, search created content.
 
 **Note**: This phase is optional! Can deploy 1a+1b first for a working file-aware chat system.
 
