@@ -27,6 +27,7 @@ const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('.
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
 const { indexFile } = require('./indexing/indexer');
 const { search } = require('./indexing/search');
+const { buildSystemPrompt } = require('./prompts/builder');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -680,11 +681,11 @@ app.post('/api/turn', async (req, res) => {
       conv = conversations.get(convId);
     } else {
       convId = newId('conv');
-      conv = { id: convId, rounds: [], perModelState: {} };
+      const defaultProjectId = getDefaultProjectId();
+      conv = { id: convId, rounds: [], perModelState: {}, projectId: defaultProjectId, projectName: 'Default Project' };
       conversations.set(convId, conv);
 
       // Insert into SQLite
-      const defaultProjectId = getDefaultProjectId();
       db.prepare(`
         INSERT INTO conversations (id, project_id, title, created_at, updated_at, round_count)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -790,7 +791,17 @@ app.post('/api/turn', async (req, res) => {
     const tasks = preparedTargets.map(async (target) => {
       const { provider, requestedModelId, modelId, name, agentId, options, index } = target;
       const adapter = getAdapter(provider);
-      let system = buildSystemPrimer(provider, modelId, systemPrompts, { agentId, modelIndex: index, agentName: name });
+      // Build system prompt with file context
+      let system = buildSystemPrompt({
+        modelId,
+        provider,
+        projectId: conv.projectId || getDefaultProjectId(),
+        projectName: conv.projectName || 'Default Project',
+        conversationInfo: {
+          round_count: conv.rounds.length,
+          summary: conv.summary
+        }
+      });
       if (capNote) system = [system, capNote].filter(Boolean).join('\n\n');
       // Build full-history messages per provider
       const stateKey = agentId || `${provider}:${modelId}:${index}`;
@@ -1036,13 +1047,22 @@ app.post('/api/preview-view', (req, res) => {
     // Load conversation or create an empty one for preview
     let conv;
     if (conversationId && conversations.has(conversationId)) conv = conversations.get(conversationId);
-    else conv = { id: conversationId || '(preview)', rounds: [], perModelState: {} };
+    else conv = { id: conversationId || '(preview)', rounds: [], perModelState: {}, projectId: getDefaultProjectId(), projectName: 'Default Project' };
 
     // Make a shallow copy and push a synthetic current round
     const convCopy = { id: conv.id, rounds: [...(conv.rounds || [])], perModelState: { ...(conv.perModelState || {}) } };
     convCopy.rounds.push({ user: { speaker: 'user', content: userMessage || '', ts: Date.now() }, agents: [] });
 
-    const system = buildSystemPrimer(provider, modelId, systemPrompts, { agentId, modelIndex: 0 });
+    const system = buildSystemPrompt({
+      modelId,
+      provider,
+      projectId: conv.projectId || getDefaultProjectId(),
+      projectName: conv.projectName || 'Default Project',
+      conversationInfo: {
+        round_count: convCopy.rounds.length,
+        summary: conv.summary
+      }
+    });
     let view;
     if (provider === 'openai' || provider === 'xai') {
       const messages = buildMessagesForOpenAI(convCopy, userMessage || '', modelId, agentId, system, textAttachments);

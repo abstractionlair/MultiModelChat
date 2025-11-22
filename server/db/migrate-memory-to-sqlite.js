@@ -146,9 +146,15 @@ function loadConversationsFromSQLite() {
             rounds[roundNum - 1] = round; // 0-indexed array
         }
 
+        // Get project name
+        const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(conv.project_id);
+        const projectName = project ? project.name : 'Default Project';
+
         conversations.set(conv.id, {
             id: conv.id,
-            project_id: conv.project_id,
+            projectId: conv.project_id, // camelCase for consistency
+            project_id: conv.project_id, // keep for backward compatibility
+            projectName,
             title: conv.title,
             rounds,
             perModelState: {}, // TODO: Add persistence for this later
