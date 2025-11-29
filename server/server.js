@@ -121,7 +121,8 @@ function defaultOptions(provider) {
     case 'openai': {
       const opts = {};
       if (maxTokens) opts.maxTokens = maxTokens;
-      const effort = process.env.OPENAI_REASONING_EFFORT || 'high';
+      // Only set reasoning options if explicitly configured (for o1/o3 models)
+      const effort = process.env.OPENAI_REASONING_EFFORT;
       if (effort) opts.reasoning = { effort };
       return opts;
     }
