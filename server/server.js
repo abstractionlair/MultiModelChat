@@ -25,7 +25,6 @@ const { validatePath, computeHash, detectMimeType } = require('./utils/files');
 const { runMigrations } = require('./db/migrate');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
-const publicGuard = require('./publicGuard');
 
 const { indexFile } = require('./indexing/indexer');
 const { search } = require('./indexing/search');
@@ -34,7 +33,15 @@ const { buildSystemPrompt } = require('./prompts/builder');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '50mb' }));
+// FIX 2: Trust exactly one proxy hop (nginx). req.ip will then be trust-proxy aware.
+// Deploy note: nginx MUST set `proxy_set_header X-Forwarded-For $remote_addr`
+// (overwrite, NOT append) so clients cannot spoof their own XFF.
+app.set('trust proxy', 1);
+
+// FIX 6: Lower body limit in PUBLIC_MODE to prevent DoS via oversized payloads
+const publicGuard = require('./publicGuard');
+const bodyLimit = publicGuard.isPublicMode() ? '64kb' : '50mb';
+app.use(express.json({ limit: bodyLimit }));
 app.use(cors());
 
 // In-memory store
@@ -482,7 +489,8 @@ app.post('/api/projects/:projectId/files', publicGuard.blockUploadsMiddleware, a
 
   } catch (err) {
     console.error('File upload error:', err);
-    res.status(500).json({ error: 'upload_failed', message: err.message });
+    const safeErr = publicGuard.sanitizeError(err);
+    res.status(500).json({ error: 'upload_failed', message: publicGuard.isPublicMode() ? 'upload failed' : safeErr.message });
   }
 });
 
@@ -542,7 +550,8 @@ app.get('/api/projects/:projectId/files', (req, res) => {
 
   } catch (err) {
     console.error('File list error:', err);
-    res.status(500).json({ error: 'list_failed', message: err.message });
+    const safeErr = publicGuard.sanitizeError(err);
+    res.status(500).json({ error: 'list_failed', message: publicGuard.isPublicMode() ? 'list failed' : safeErr.message });
   }
 });
 
@@ -587,7 +596,8 @@ app.get('/api/projects/:projectId/files/:fileId', async (req, res) => {
 
   } catch (err) {
     console.error('File read error:', err);
-    res.status(500).json({ error: 'read_failed', message: err.message });
+    const safeErr = publicGuard.sanitizeError(err);
+    res.status(500).json({ error: 'read_failed', message: publicGuard.isPublicMode() ? 'read failed' : safeErr.message });
   }
 });
 
@@ -595,7 +605,7 @@ app.get('/api/projects/:projectId/files/:fileId', async (req, res) => {
  * DELETE /api/projects/:projectId/files/:fileId
  * Delete a file
  */
-app.delete('/api/projects/:projectId/files/:fileId', async (req, res) => {
+app.delete('/api/projects/:projectId/files/:fileId', publicGuard.blockFileMutationsMiddleware, async (req, res) => {
   const { projectId, fileId } = req.params;
 
   try {
@@ -634,7 +644,8 @@ app.delete('/api/projects/:projectId/files/:fileId', async (req, res) => {
 
   } catch (err) {
     console.error('File delete error:', err);
-    res.status(500).json({ error: 'delete_failed', message: err.message });
+    const safeErr = publicGuard.sanitizeError(err);
+    res.status(500).json({ error: 'delete_failed', message: publicGuard.isPublicMode() ? 'delete failed' : safeErr.message });
   }
 });
 
@@ -667,7 +678,8 @@ app.post('/api/projects/:projectId/search', (req, res) => {
     }
 
     console.error('Search error:', err);
-    res.status(500).json({ error: 'search_failed', message: err.message });
+    const safeErr = publicGuard.sanitizeError(err);
+    res.status(500).json({ error: 'search_failed', message: publicGuard.isPublicMode() ? 'search failed' : safeErr.message });
   }
 });
 
@@ -688,9 +700,56 @@ app.post('/api/turn', async (req, res) => {
       return res.status(400).json({ error: 'userMessage and targetModels are required' });
     }
 
-    // Load or create conversation
+    // FIX 4: Validate message length and target count (PUBLIC_MODE)
+    const turnErr = publicGuard.validateTurnRequest(req.body);
+    if (turnErr) {
+      return res.status(turnErr.status).json({ error: turnErr.error, message: turnErr.message });
+    }
+
+    // FIX 1 + FIX 6: Prepare targets with sanitized options — BEFORE any state mutation
+    const clampMaxTokens = parseInt(process.env.PUBLIC_MAX_TOKENS_PER_TURN, 10);
+    const clampValue = publicGuard.isPublicMode()
+      ? (Number.isFinite(clampMaxTokens) && clampMaxTokens > 0 ? clampMaxTokens : 700)
+      : undefined;
+
+    // Determine dynamic capabilities for this turn (e.g., Gemini web search grounding)
+    function googleGroundingEnabled(options) {
+      const eb = options && options.extraBody;
+      const tools = eb && Array.isArray(eb.tools) ? eb.tools : [];
+      return tools.some((t) => t && (Object.prototype.hasOwnProperty.call(t, 'googleSearch') || Object.prototype.hasOwnProperty.call(t, 'googleSearchRetrieval')));
+    }
+    const preparedTargets = targetModels.map((m, index) => {
+      const provider = (m.provider || '').toLowerCase();
+      const requestedModelId = m.modelId;
+      const modelId = (resolveModelId(provider, requestedModelId) || '').toLowerCase();
+      const name = typeof m.name === 'string' ? m.name.trim() : '';
+      const agentId = normalizeAgentId(provider, modelId, m.agentId, index);
+      let options = buildOptions(provider, m.options);
+      options = publicGuard.clampMaxTokens(options);
+      // FIX 1: Sanitize options in PUBLIC_MODE — drop extraBody, extraHeaders, tools, reasoning, thinking
+      options = publicGuard.sanitizeOptions(options, modelId, clampValue);
+      return {
+        provider,
+        requestedModelId,
+        modelId,
+        name,
+        agentId,
+        options,
+        index,
+      };
+    });
+
+    // PUBLIC_MODE: allowlist check (after model ID resolution)
+    // IMPORTANT: This runs BEFORE any state mutation so nothing is persisted on rejection
+    const allowlistErr = publicGuard.checkAllowlist(preparedTargets);
+    if (allowlistErr) {
+      return res.status(allowlistErr.status).json({ error: allowlistErr.error, message: allowlistErr.message, allowedModels: allowlistErr.allowedModels });
+    }
+
+    // Now safe to mutate state — load or create conversation
     let convId = conversationId;
     let conv;
+    let isNewConversation = false;
     if (convId && conversations.has(convId)) {
       conv = conversations.get(convId);
     } else {
@@ -698,19 +757,7 @@ app.post('/api/turn', async (req, res) => {
       const defaultProjectId = getDefaultProjectId();
       conv = { id: convId, rounds: [], perModelState: {}, projectId: defaultProjectId, projectName: 'Default Project' };
       conversations.set(convId, conv);
-
-      // Insert into SQLite
-      db.prepare(`
-        INSERT INTO conversations (id, project_id, title, created_at, updated_at, round_count)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        convId,
-        defaultProjectId,
-        `Conversation ${convId}`,
-        Date.now(),
-        Date.now(),
-        0
-      );
+      isNewConversation = true;
     }
 
     // Start new round with the user's message
@@ -720,10 +767,26 @@ app.post('/api/turn', async (req, res) => {
     }
     conv.rounds.push(round);
 
-    // Persist to SQLite
+    // FIX 4: Persist to SQLite — conversation row FIRST (for new convs), then messages
+    // This preserves FK ordering: conversation_messages.conversation_id FK → conversations.id
     const roundNum = conv.rounds.length;
 
-    // Insert user message
+    if (isNewConversation) {
+      // Insert conversation row FIRST so FK constraint is satisfied
+      db.prepare(`
+        INSERT INTO conversations (id, project_id, title, created_at, updated_at, round_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        convId,
+        conv.projectId,
+        `Conversation ${convId}`,
+        Date.now(),
+        Date.now(),
+        0
+      );
+    }
+
+    // Now insert the user message (FK to conversations.id is satisfied)
     const userMsgId = newId('msg');
     db.prepare(`
       INSERT INTO conversation_messages (id, conversation_id, round_number, speaker, content, metadata, created_at)
@@ -759,41 +822,6 @@ app.post('/api/turn', async (req, res) => {
       });
     }
 
-    // Determine dynamic capabilities for this turn (e.g., Gemini web search grounding)
-    function googleGroundingEnabled(options) {
-      const eb = options && options.extraBody;
-      const tools = eb && Array.isArray(eb.tools) ? eb.tools : [];
-      return tools.some((t) => t && (Object.prototype.hasOwnProperty.call(t, 'googleSearch') || Object.prototype.hasOwnProperty.call(t, 'googleSearchRetrieval')));
-    }
-    const preparedTargets = targetModels.map((m, index) => {
-      const provider = (m.provider || '').toLowerCase();
-      const requestedModelId = m.modelId;
-      const modelId = (resolveModelId(provider, requestedModelId) || '').toLowerCase();
-      const name = typeof m.name === 'string' ? m.name.trim() : '';
-      const agentId = normalizeAgentId(provider, modelId, m.agentId, index);
-      let options = buildOptions(provider, m.options);
-      options = publicGuard.clampMaxTokens(options);
-      return {
-        provider,
-        requestedModelId,
-        modelId,
-        name,
-        agentId,
-        options,
-        index,
-      };
-    });
-
-    // PUBLIC_MODE: allowlist check (after model ID resolution)
-    const allowlistErr = publicGuard.checkAllowlist(preparedTargets);
-    if (allowlistErr) {
-      return res.status(allowlistErr.status).json({ error: allowlistErr.error, message: allowlistErr.message, allowedModels: allowlistErr.allowedModels });
-    }
-
-    // PUBLIC_MODE: budget check for non-mock providers
-    const budgetStatus = publicGuard.checkDailyBudget();
-    const budgetBlocked = budgetStatus && budgetStatus.blocked;
-
     const searchCapableAgents = [];
     try {
       for (const target of preparedTargets) {
@@ -812,10 +840,33 @@ app.post('/api/turn', async (req, res) => {
       )
       : '';
 
-    // PUBLIC_MODE: track turn
-    publicGuard.trackTurn(req);
+    // FIX 6 + FIX 8: Count real targets, reserve budget, consume rate per call
+    const realTargets = preparedTargets.filter(t => t.provider !== 'mock');
+    const realTargetCount = realTargets.length;
+    const effectiveClamp = clampValue || 700;
 
-    // Fan-out to each target model in parallel
+    if (publicGuard.isPublicMode() && realTargetCount > 0) {
+      // FIX 8: Atomic budget reservation
+      const budgetRes = publicGuard.reserveBudget(realTargetCount, effectiveClamp);
+      if (budgetRes && budgetRes.blocked) {
+        return res.status(429).json({ error: 'budget_exceeded', message: budgetRes.message });
+      }
+
+      // FIX 6b: Per-call rate limiting
+      const ip = publicGuard.getClientIp(req);
+      const rateErr2 = publicGuard.consumeRatePerCall(ip, realTargetCount);
+      if (rateErr2) {
+        return res.status(rateErr2.status).json({ error: rateErr2.error, message: rateErr2.message, retryAfter: rateErr2.retryAfter });
+      }
+    }
+
+    // PUBLIC_MODE: budget check for non-mock providers (backstop)
+    const budgetStatus = publicGuard.checkDailyBudget();
+    const budgetBlocked = budgetStatus && budgetStatus.blocked;
+
+    // FIX 6b: Don't double-count turns — skip trackTurn when per-call counting is active
+    // trackTurn is now handled by consumeRatePerCall for real targets
+
     const tasks = preparedTargets.map(async (target) => {
       const { provider, requestedModelId, modelId, name, agentId, options, index } = target;
       const adapter = getAdapter(provider);
@@ -920,7 +971,11 @@ app.post('/api/turn', async (req, res) => {
         }
         return { agentId, provider, name, modelId, requestedModelId, text, usage, tokenUsage, finishReason, meta: result && result.meta };
       } catch (err) {
-        const error = err && err.message ? err.message : 'Adapter error';
+        // FIX 5: Sanitize error in PUBLIC_MODE
+        const safeErr = publicGuard.sanitizeError(err);
+        const errorMsg = publicGuard.isPublicMode()
+          ? publicGuard.genericProviderError(provider) || safeErr.message
+          : safeErr.message;
         const maxTokens = options && options.maxTokens !== undefined ? options.maxTokens : resolveMaxTokens(provider);
         if (dbg) {
           console.log('[turn] error', {
@@ -929,10 +984,10 @@ app.post('/api/turn', async (req, res) => {
             name,
             modelId,
             requestedModelId,
-            error,
+            error: safeErr.message,
           });
         }
-        return { agentId, provider, name, modelId, requestedModelId, error, tokenUsage: summarizeUsage(provider, undefined, maxTokens) };
+        return { agentId, provider, name, modelId, requestedModelId, error: errorMsg, tokenUsage: summarizeUsage(provider, undefined, maxTokens) };
       }
     });
 
@@ -960,8 +1015,8 @@ app.post('/api/turn', async (req, res) => {
 
           // If all done, finalize and close
           if (completed === total) {
-            // Auto-save if enabled
-            if (conv.autoSave && conv.autoSave.enabled) {
+            // FIX 4: Autosave disabled in PUBLIC_MODE
+            if (conv.autoSave && conv.autoSave.enabled && !publicGuard.isPublicMode()) {
               writeTranscript(conv, conv.autoSave.format || 'md')
                 .then(p => { if (dbg) console.log('[autosave] wrote', p); })
                 .catch(e => { if (dbg) console.log('[autosave] failed', e && e.message ? e.message : e); });
@@ -975,7 +1030,7 @@ app.post('/api/turn', async (req, res) => {
           const errorResult = {
             agentId: `error-${i}`,
             provider: 'unknown',
-            error: err.message || 'Unknown error'
+            error: publicGuard.isPublicMode() ? 'model service unavailable' : (err.message || 'Unknown error')
           };
           res.write(`data: ${JSON.stringify({ type: 'result', result: errorResult, completed, total })}\n\n`);
 
@@ -988,8 +1043,8 @@ app.post('/api/turn', async (req, res) => {
     } else {
       // Legacy non-streaming response
       const results = await Promise.all(tasks);
-      // Auto-save if enabled for this conversation
-      if (conv.autoSave && conv.autoSave.enabled) {
+      // FIX 4: Autosave disabled in PUBLIC_MODE
+      if (conv.autoSave && conv.autoSave.enabled && !publicGuard.isPublicMode()) {
         try {
           const p = await writeTranscript(conv, conv.autoSave.format || 'md');
           if (dbg) console.log('[autosave] wrote', p);
@@ -1000,8 +1055,12 @@ app.post('/api/turn', async (req, res) => {
       res.json({ conversationId: convId, results });
     }
   } catch (e) {
-    console.error('turn error', e);
-    res.status(500).json({ error: 'internal_error', detail: String(e && e.message ? e.message : e) });
+    // FIX 5: Sanitize error in PUBLIC_MODE
+    const safeErr = publicGuard.sanitizeError(e);
+    const detail = publicGuard.isPublicMode()
+      ? 'internal_error'
+      : String(safeErr.message);
+    res.status(500).json({ error: 'internal_error', detail });
   }
 });
 
@@ -1053,13 +1112,20 @@ app.get('/api/conversation/:id/export', async (req, res) => {
       return res.send(body);
     }
   } catch (e) {
-    res.status(500).json({ error: 'export_failed', detail: String(e && e.message ? e.message : e) });
+    res.status(500).json({ error: 'export_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e && e.message ? e.message : e) });
   }
 });
 
 // Toggle auto-save for a conversation
-app.post('/api/conversation/:id/autosave', async (req, res) => {
+// FIX 4: Autosave disabled in PUBLIC_MODE
+app.post('/api/conversation/:id/autosave', (req, res) => {
   try {
+    if (publicGuard.isPublicMode()) {
+      return res.status(403).json({
+        error: 'autosave_disabled',
+        message: 'Autosave is disabled in public sandbox mode.',
+      });
+    }
     const id = req.params.id;
     const conv = conversations.get(id);
     if (!conv) return res.status(404).json({ error: 'not_found' });
@@ -1067,11 +1133,12 @@ app.post('/api/conversation/:id/autosave', async (req, res) => {
     conv.autoSave = { enabled: !!enabled, format: (format === 'json' ? 'json' : 'md') };
     let filePath = undefined;
     if (conv.autoSave.enabled) {
-      filePath = await writeTranscript(conv, conv.autoSave.format || 'md');
+      filePath = writeTranscript(conv, conv.autoSave.format || 'md');
     }
     res.json({ ok: true, enabled: conv.autoSave.enabled, format: conv.autoSave.format, path: filePath });
   } catch (e) {
-    res.status(500).json({ error: 'autosave_failed', detail: String(e && e.message ? e.message : e) });
+    const safeErr = publicGuard.sanitizeError(e);
+    res.status(500).json({ error: 'autosave_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(safeErr.message) });
   }
 });
 
@@ -1117,7 +1184,7 @@ app.post('/api/preview-view', (req, res) => {
     }
     res.json({ provider, requestedModelId, modelId, system, view });
   } catch (e) {
-    res.status(500).json({ error: 'preview_failed', detail: String(e && e.message ? e.message : e) });
+    res.status(500).json({ error: 'preview_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e && e.message ? e.message : e) });
   }
 });
 
@@ -1142,7 +1209,7 @@ app.get('/api/models', async (req, res) => {
 
     res.json(data);
   } catch (e) {
-    res.status(500).json({ error: 'models_list_failed', detail: String(e && e.message ? e.message : e) });
+    res.status(500).json({ error: 'models_list_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e && e.message ? e.message : e) });
   }
 });
 
@@ -1181,22 +1248,27 @@ app.get('/api/conversations', (req, res) => {
       offset
     });
   } catch (e) {
-    res.status(500).json({ error: 'list_failed', detail: String(e.message) });
+    res.status(500).json({ error: 'list_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e.message) });
   }
 });
 
-// GET /api/config - Get all configuration
+// GET /api/config - Get configuration
+// FIX 3: In PUBLIC_MODE, return only public flags (banner, publicMode)
 app.get('/api/config', (req, res) => {
   try {
+    if (publicGuard.isPublicMode()) {
+      return res.json(publicGuard.publicModeConfig());
+    }
     const config = getAllConfig();
     res.json(config);
   } catch (e) {
-    res.status(500).json({ error: 'config_fetch_failed', detail: String(e.message) });
+    res.status(500).json({ error: 'config_fetch_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e.message) });
   }
 });
 
 // POST /api/config - Update configuration
-app.post('/api/config', (req, res) => {
+// FIX 3: Block config mutation in PUBLIC_MODE
+app.post('/api/config', publicGuard.blockConfigMutationMiddleware, (req, res) => {
   try {
     const { key, value } = req.body;
 
@@ -1207,12 +1279,13 @@ app.post('/api/config', (req, res) => {
     setConfig(key, value);
     res.json({ ok: true, key, value });
   } catch (e) {
-    res.status(500).json({ error: 'config_update_failed', detail: String(e.message) });
+    res.status(500).json({ error: 'config_update_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e.message) });
   }
 });
 
 // POST /api/config/bulk - Update multiple config values
-app.post('/api/config/bulk', (req, res) => {
+// FIX 3: Block config mutation in PUBLIC_MODE
+app.post('/api/config/bulk', publicGuard.blockConfigMutationMiddleware, (req, res) => {
   try {
     const updates = req.body;
 
@@ -1226,7 +1299,7 @@ app.post('/api/config/bulk', (req, res) => {
 
     res.json({ ok: true, updated: Object.keys(updates) });
   } catch (e) {
-    res.status(500).json({ error: 'bulk_update_failed', detail: String(e.message) });
+    res.status(500).json({ error: 'bulk_update_failed', detail: publicGuard.isPublicMode() ? 'internal_error' : String(e.message) });
   }
 });
 

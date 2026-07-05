@@ -328,7 +328,7 @@ const mockNext = () => { middlewareCalled = true; };
 
 guard7.blockUploadsMiddleware({}, mockRes, mockNext);
 assert(mockRes.statusCode === 403, 'upload returns 403 in PUBLIC_MODE');
-assert(mockRes.data && mockRes.data.error === 'uploads_disabled', 'error is uploads_disabled');
+assert(mockRes.data && mockRes.data.error === 'file_operations_disabled', 'error is file_operations_disabled (delegates to blockFileMutationsMiddleware)');
 
 console.log();
 
@@ -368,6 +368,282 @@ let nextCalled8 = false;
 guard8.blockUploadsMiddleware({}, mockRes8, () => { nextCalled8 = true; });
 assert(nextCalled8, 'blockUploadsMiddleware calls next when inert');
 assert(!mc, 'blockUploadsMiddleware does not block when inert');
+
+console.log();
+
+// ===== Test R1: FIX 1 — options side-channel (extraBody bypass) =====
+console.log('R1. Options side-channel sanitization');
+setPublicMode(true);
+process.env.PUBLIC_MAX_TOKENS_PER_TURN = '300';
+delete require.cache[require.resolve('./publicGuard')];
+const guardR1 = require('./publicGuard');
+
+// extraBody, extraHeaders, tools, thinking, reasoning should be stripped
+const dirtyOptions = {
+  maxTokens: 99999,
+  extraBody: { model: 'gpt-5', max_output_tokens: 999999 },
+  extraHeaders: { 'X-Secret': 'leaked' },
+  tools: [{ type: 'code_execution_20250825' }],
+  thinking: { type: 'enabled', budget_tokens: 50000 },
+  reasoning: { effort: 'high' },
+  temperature: 0.7,
+};
+const sanitized = guardR1.sanitizeOptions(dirtyOptions, 'gpt-4o-mini', 300);
+assert(!sanitized.extraBody, 'extraBody is stripped');
+assert(!sanitized.extraHeaders, 'extraHeaders is stripped');
+assert(!sanitized.tools, 'tools is stripped');
+assert(!sanitized.thinking, 'thinking is stripped');
+assert(!sanitized.reasoning, 'reasoning is stripped');
+assertEqual(sanitized.maxTokens, 300, 'maxTokens is re-asserted to clamp value');
+assertEqual(sanitized.temperature, 0.7, 'safe field temperature is preserved');
+
+// When PUBLIC_MODE unset, sanitizeOptions should return options unchanged
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR1b = require('./publicGuard');
+const inertResult = guardR1b.sanitizeOptions(dirtyOptions, 'gpt-5', 300);
+assert(inertResult === dirtyOptions, 'sanitizeOptions returns options unchanged when inert');
+
+console.log();
+
+// ===== Test R2: FIX 2 — X-Forwarded-For spoofing =====
+console.log('R2. X-Forwarded-For spoofing prevention');
+setPublicMode(true);
+delete require.cache[require.resolve('./publicGuard')];
+const guardR2 = require('./publicGuard');
+
+// getClientIp should use req.ip, NOT raw X-Forwarded-For header
+const spoofedReq = {
+  headers: { 'x-forwarded-for': '1.1.1.1, 2.2.2.2' },
+  ip: '10.0.0.1',
+  connection: { remoteAddress: '10.0.0.1' },
+};
+const clientIp = guardR2.getClientIp(spoofedReq);
+assertEqual(clientIp, '10.0.0.1', 'getClientIp uses req.ip, not spoofed X-Forwarded-For');
+
+// Without req.ip, fall back to connection.remoteAddress
+const noIpReq = {
+  headers: { 'x-forwarded-for': '1.1.1.1' },
+  connection: { remoteAddress: '10.0.0.2' },
+};
+const fallbackIp = guardR2.getClientIp(noIpReq);
+assertEqual(fallbackIp, '10.0.0.2', 'getClientIp falls back to connection.remoteAddress');
+
+console.log();
+
+// ===== Test R3: FIX 3 — Config mutation blocked in PUBLIC_MODE =====
+console.log('R3. Config mutation blocked in PUBLIC_MODE');
+setPublicMode(true);
+delete require.cache[require.resolve('./publicGuard')];
+const guardR3 = require('./publicGuard');
+
+// blockConfigMutationMiddleware should return 403
+let configRes = { status(c) { this.statusCode = c; return this; }, json(d) { this.data = d; } };
+guardR3.blockConfigMutationMiddleware({}, configRes, () => { configRes.nextCalled = true; });
+assertEqual(configRes.statusCode, 403, 'POST config returns 403 in PUBLIC_MODE');
+assertEqual(configRes.data && configRes.data.error, 'config_disabled', 'error is config_disabled');
+assert(!configRes.nextCalled, 'next is not called');
+
+// When inert, should call next
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR3b = require('./publicGuard');
+let configRes2 = { status(c) { this.statusCode = c; return this; }, json(d) { this.data = d; } };
+let nextCalled = false;
+guardR3b.blockConfigMutationMiddleware({}, configRes2, () => { nextCalled = true; });
+assert(nextCalled, 'config middleware calls next when inert');
+
+console.log();
+
+// ===== Test R4: FIX 4 — Storage/DoS caps =====
+console.log('R4. Storage/DoS caps');
+setPublicMode(true);
+process.env.PUBLIC_MAX_MESSAGE_CHARS = '100';
+process.env.PUBLIC_MAX_TARGETS_PER_TURN = '2';
+delete require.cache[require.resolve('./publicGuard')];
+const guardR4 = require('./publicGuard');
+
+// Message too long
+const longMsgErr = guardR4.validateTurnRequest({
+  userMessage: 'x'.repeat(200),
+  targetModels: [{ provider: 'mock', modelId: 'mock-echo' }],
+});
+assert(longMsgErr && longMsgErr.status === 400, 'message too long returns 400');
+assert(longMsgErr && longMsgErr.error === 'message_too_long', 'error is message_too_long');
+
+// Too many targets
+const tooManyErr = guardR4.validateTurnRequest({
+  userMessage: 'hi',
+  targetModels: [
+    { provider: 'mock', modelId: 'mock-echo' },
+    { provider: 'mock', modelId: 'mock-lorem' },
+    { provider: 'mock', modelId: 'mock-slow' },
+  ],
+});
+assert(tooManyErr && tooManyErr.status === 400, 'too many targets returns 400');
+assert(tooManyErr && tooManyErr.error === 'too_many_targets', 'error is too_many_targets');
+
+// Valid request passes
+const validResult = guardR4.validateTurnRequest({
+  userMessage: 'hello',
+  targetModels: [{ provider: 'mock', modelId: 'mock-echo' }],
+});
+assertEqual(validResult, null, 'valid request passes validation');
+
+// When inert, validation passes regardless
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR4b = require('./publicGuard');
+const inertValidation = guardR4b.validateTurnRequest({
+  userMessage: 'x'.repeat(10000),
+  targetModels: Array(20).fill({ provider: 'openai', modelId: 'gpt-5' }),
+});
+assertEqual(inertValidation, null, 'validation inert when PUBLIC_MODE unset');
+
+console.log();
+
+// ===== Test R5: FIX 5 — Info leak prevention =====
+console.log('R5. Info leak prevention');
+setPublicMode(true);
+delete require.cache[require.resolve('./publicGuard')];
+const guardR5 = require('./publicGuard');
+
+// Error with filesystem path should be sanitized
+const pathErr = new Error('ENOENT: no such file, open /home/user/secrets/data.db');
+const sanitizedPath = guardR5.sanitizeError(pathErr);
+assert(!sanitizedPath.message.includes('/home/'), 'filesystem path is redacted');
+assert(sanitizedPath.message.includes('[path redacted]'), 'path replaced with redaction marker');
+
+// Error with API key should be sanitized
+const keyErr = new Error('OpenAI error 401: Incorrect API key provided: sk-abc123def456ghi789jkl012mno345pqr678stu901');
+const sanitizedKey = guardR5.sanitizeError(keyErr);
+assert(!sanitizedKey.message.includes('sk-'), 'API key is redacted');
+assert(sanitizedKey.message.includes('[key redacted]'), 'key replaced with redaction marker');
+
+// Generic provider error message
+const genericMsg = guardR5.genericProviderError('openai');
+assert(genericMsg && genericMsg.includes('openai'), 'generic error mentions provider');
+assert(genericMsg && !genericMsg.includes('key'), 'generic error does not mention key');
+assert(genericMsg && !genericMsg.includes('/'), 'generic error does not contain paths');
+
+// When inert, errors pass through unchanged
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR5b = require('./publicGuard');
+const inertErr = new Error('real error with /path/and sk-key123');
+const inertResult2 = guardR5b.sanitizeError(inertErr);
+assertEqual(inertResult2.message, inertErr.message, 'error unchanged when inert');
+
+console.log();
+
+// ===== Test R6: FIX 6 — Fan-out amplification =====
+console.log('R6. Fan-out amplification prevention');
+setPublicMode(true);
+process.env.PUBLIC_MAX_TARGETS_PER_TURN = '4';
+process.env.PUBLIC_MAX_TOKENS_PER_TURN = '300';
+cleanGuardUsage();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR6 = require('./publicGuard');
+
+// Per-call rate limiting: 3 real targets should consume 3 rate units
+const reqR6 = { headers: {}, ip: '10.0.0.99', connection: { remoteAddress: '10.0.0.99' } };
+process.env.PUBLIC_TURNS_PER_MIN = '5';
+
+// First call with 3 real targets
+const rateErr1 = guardR6.consumeRatePerCall('10.0.0.99', 3);
+assertEqual(rateErr1, null, '3 real targets pass with limit 5');
+
+// Second call with 3 real targets should fail (3+3 > 5)
+const rateErr2 = guardR6.consumeRatePerCall('10.0.0.99', 3);
+assert(rateErr2 && rateErr2.status === 429, '6 total calls exceeds limit of 5');
+
+// Budget reservation
+cleanGuardUsage();
+process.env.PUBLIC_DAILY_TOKEN_BUDGET = '500';
+delete require.cache[require.resolve('./publicGuard')];
+const guardR6b = require('./publicGuard');
+
+const res1 = guardR6b.reserveBudget(2, 300); // 2 targets * 300 = 600 > 500
+assert(res1 && res1.blocked, 'reservation blocked when estimate exceeds budget');
+
+const res2 = guardR6b.reserveBudget(1, 200); // 1 * 200 = 200 < 500
+assert(res2 && res2.reserved === 200, 'reservation succeeds when within budget');
+
+// When inert, per-call counting is a no-op
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR6c = require('./publicGuard');
+const inertRate = guardR6c.consumeRatePerCall('10.0.0.99', 100);
+assertEqual(inertRate, null, 'per-call rate inert when PUBLIC_MODE unset');
+
+const inertReserve = guardR6c.reserveBudget(100, 99999);
+assertEqual(inertReserve, null, 'budget reservation inert when PUBLIC_MODE unset');
+
+console.log();
+
+// ===== Test R7: FIX 7 — DELETE file route blocked =====
+console.log('R7. DELETE file route blocked in PUBLIC_MODE');
+setPublicMode(true);
+delete require.cache[require.resolve('./publicGuard')];
+const guardR7 = require('./publicGuard');
+
+// blockFileMutationsMiddleware should return 403
+let delRes = { status(c) { this.statusCode = c; return this; }, json(d) { this.data = d; } };
+guardR7.blockFileMutationsMiddleware({}, delRes, () => { delRes.nextCalled = true; });
+assertEqual(delRes.statusCode, 403, 'DELETE file returns 403 in PUBLIC_MODE');
+assertEqual(delRes.data && delRes.data.error, 'file_operations_disabled', 'error is file_operations_disabled');
+assert(!delRes.nextCalled, 'next is not called');
+
+// When inert, should call next
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR7b = require('./publicGuard');
+let delRes2 = { status(c) { this.statusCode = c; return this; }, json(d) { this.data = d; } };
+let delNextCalled = false;
+guardR7b.blockFileMutationsMiddleware({}, delRes2, () => { delNextCalled = true; });
+assert(delNextCalled, 'file mutation middleware calls next when inert');
+
+console.log();
+
+// ===== Test R8: FIX 8 — Budget atomic reservation =====
+console.log('R8. Budget atomic reservation');
+setPublicMode(true);
+process.env.PUBLIC_DAILY_TOKEN_BUDGET = '1000';
+cleanGuardUsage();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR8 = require('./publicGuard');
+
+// Reserve 3 targets * 200 = 600
+const res = guardR8.reserveBudget(3, 200);
+assert(res && res.reserved === 600, 'reservation of 600 succeeds');
+
+// Check that 600 is actually in the DB
+const budgetRow = db.prepare("SELECT tokens FROM guard_usage WHERE ip = 'GLOBAL' AND key_type = 'daily_budget'").get();
+assert(budgetRow && budgetRow.tokens === 600, 'reserved tokens are in the database');
+
+// Now try to reserve 3 * 200 = 600 more (total would be 1200 > 1000)
+const res8b = guardR8.reserveBudget(3, 200);
+assert(res8b && res8b.blocked, 'second reservation blocked (would exceed budget)');
+
+// When inert, reservation is a no-op
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR8b = require('./publicGuard');
+const inertRes = guardR8b.reserveBudget(100, 99999);
+assertEqual(inertRes, null, 'reservation inert when PUBLIC_MODE unset');
+
+console.log();
+
+// ===== Test R9: sanitizeOptions when PUBLIC_MODE unset (inert) =====
+console.log('R9. sanitizeOptions inert when PUBLIC_MODE unset');
+clearPublicEnv();
+delete require.cache[require.resolve('./publicGuard')];
+const guardR9 = require('./publicGuard');
+
+const opts = { extraBody: { model: 'gpt-5' }, maxTokens: 9999, temperature: 0.5 };
+const r9result = guardR9.sanitizeOptions(opts, 'gpt-4o', 300);
+assert(r9result === opts, 'sanitizeOptions returns same object when inert');
+assert(r9result.extraBody && r9result.extraBody.model === 'gpt-5', 'extraBody preserved when inert');
 
 console.log();
 
