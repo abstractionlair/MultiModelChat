@@ -6,6 +6,8 @@ runMigrations();
 let failures = 0;
 let passed = 0;
 
+async function main() {
+
 function assert(condition, label) {
   if (condition) {
     console.log(`  ✓ ${label}`);
@@ -68,7 +70,7 @@ assertEqual(guard.checkDailyBudget(), null, 'daily budget check passes (inert)')
 
 let clamped = guard.clampMaxTokens({ maxTokens: 99999 });
 assertEqual(clamped.maxTokens, 99999, 'clampMaxTokens leaves high values alone when inert');
-assertEqual(clamped, guard.clampMaxTokens(undefined), 'clampMaxTokens(undefined) returns undefined when inert');
+assertEqual(guard.clampMaxTokens(undefined), undefined, 'clampMaxTokens(undefined) returns undefined when inert');
 
 console.log();
 
@@ -336,3 +338,9 @@ if (failures > 0) {
 } else {
   console.log('\nAll tests passed!');
 }
+}
+
+main().catch(err => {
+  console.error('Test error:', err);
+  process.exit(1);
+});
