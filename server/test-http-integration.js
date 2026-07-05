@@ -37,7 +37,9 @@ function startServer(port, publicMode, overrides = {}) {
   const env = { ...process.env, PORT: String(port),
     OPENAI_API_KEY: 'fake', ANTHROPIC_API_KEY: 'fake', GOOGLE_API_KEY: 'fake', XAI_API_KEY: 'fake',
     DB_PATH: path.join(tmp, 'db.sqlite'), STORAGE_DIR: path.join(tmp, 'storage'), TRANSCRIPTS_DIR: path.join(tmp, 'tx'),
-    PUBLIC_TURNS_PER_MIN: '100', PUBLIC_MAX_TARGETS_PER_TURN: '4', PUBLIC_MAX_MESSAGE_CHARS: '8192', ...overrides };
+    PUBLIC_TURNS_PER_MIN: '100', PUBLIC_MAX_TARGETS_PER_TURN: '4', PUBLIC_MAX_MESSAGE_CHARS: '8192',
+    // Explicit test allowlist (independent of the production default).
+    PUBLIC_MODEL_ALLOWLIST: 'openai:gpt-4o-mini,openai:gpt-5-nano,google:gemini-2.5-flash-lite', ...overrides };
   if (publicMode) env.PUBLIC_MODE = '1'; else delete env.PUBLIC_MODE;
   const proc = spawn('node', [path.join(__dirname, 'server.js')], { env, stdio: 'ignore' });
   return { proc, tmp };

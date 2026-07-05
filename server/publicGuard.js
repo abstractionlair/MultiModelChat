@@ -3,13 +3,18 @@ const { db } = require('./db/index');
 const PUBLIC_MODE_BANNER =
   'Public sandbox — a personal experiment in multi-model chat. Conversations are visible to everyone and wiped daily. Cheap models only. Please don\'t paste anything private.';
 
+// Shown under the banner. Explains the deliberately narrow model set and
+// points to what the app itself supports.
+const PUBLIC_MODE_MODELS_NOTE =
+  'This public demo runs only the cheapest models (GPT-5 nano, Gemini 2.5 Flash-Lite) to keep costs down. The app itself supports Claude, GPT, Gemini, and Grok side by side — run your own instance with your own keys for the full lineup.';
+
 const ALLOWED_PROVIDERS = ['openai', 'anthropic', 'google', 'xai', 'mock'];
 
+// Verified callable 2026-07-05 against the funded keys. Overridable via
+// PUBLIC_MODEL_ALLOWLIST; mock is always allowed regardless.
 const DEFAULT_ALLOWLIST = [
-  'openai:gpt-4o-mini',
-  'anthropic:claude-3-haiku-20240307',
-  'google:gemini-2.0-flash-lite',
-  'xai:grok-2',
+  'openai:gpt-5-nano',
+  'google:gemini-2.5-flash-lite',
 ];
 
 const env = (...args) => args.some(k => process.env[k] !== undefined);
@@ -399,6 +404,7 @@ function publicModeConfig() {
   return {
     publicMode: isPublicMode(),
     banner: isPublicMode() ? PUBLIC_MODE_BANNER : '',
+    modelsNote: isPublicMode() ? PUBLIC_MODE_MODELS_NOTE : '',
   };
 }
 

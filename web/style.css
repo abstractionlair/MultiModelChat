@@ -740,6 +740,14 @@ a:hover {
   animation: fadeInUp 0.5s ease-out;
 }
 
+.public-models-note {
+  padding: 8px 18px 0;
+  margin-bottom: 16px;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #9aa);
+  line-height: 1.5;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   h1 {

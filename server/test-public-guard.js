@@ -146,8 +146,8 @@ const guard2c = require('./publicGuard');
 result = guard2c.checkAllowlist([{ provider: 'MOCK', modelId: 'MOCK-ECHO' }]);
 assertEqual(result, null, 'MOCK:MOCK-ECHO (uppercase) always allowed (mock bypass)');
 
-result = guard2c.checkAllowlist([{ provider: 'OPENAI', modelId: 'GPT-4O-MINI' }]);
-assertEqual(result, null, 'OPENAI:GPT-4O-MINI matches default allowlist entry (case-insensitive)');
+result = guard2c.checkAllowlist([{ provider: 'OPENAI', modelId: 'GPT-5-NANO' }]);
+assertEqual(result, null, 'OPENAI:GPT-5-NANO matches default allowlist entry (case-insensitive)');
 
 console.log();
 

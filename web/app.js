@@ -1068,6 +1068,12 @@ userMsgEl.addEventListener('keypress', (e) => {
       const containerEl = q('.container');
       if (containerEl) {
         containerEl.insertBefore(banner, containerEl.firstChild);
+        if (health.modelsNote) {
+          const note = document.createElement('div');
+          note.className = 'public-models-note';
+          note.textContent = health.modelsNote;
+          containerEl.insertBefore(note, banner.nextSibling);
+        }
       }
     }
   } catch (e) {
