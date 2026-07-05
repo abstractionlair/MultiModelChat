@@ -308,16 +308,18 @@ function populateModelSelect(row, preserve = false) {
 
   sel.innerHTML = '';
 
-  // Smart option
-  const optSmart = document.createElement('option');
-  optSmart.value = 'smart';
-  optSmart.textContent = smartLabelFor(provider);
-  sel.appendChild(optSmart);
+  // "Smart" resolves to a provider default that isn't allowlisted in public
+  // mode — omit it there and select the concrete allowed model instead.
+  if (!IS_PUBLIC) {
+    const optSmart = document.createElement('option');
+    optSmart.value = 'smart';
+    optSmart.textContent = smartLabelFor(provider);
+    sel.appendChild(optSmart);
 
-  // Separator
-  const sep = document.createElement('option');
-  sep.disabled = true; sep.textContent = '──────────';
-  sel.appendChild(sep);
+    const sep = document.createElement('option');
+    sep.disabled = true; sep.textContent = '──────────';
+    sel.appendChild(sep);
+  }
 
   // Models
   const list = getProviderModels(provider);
@@ -339,18 +341,25 @@ function populateModelSelect(row, preserve = false) {
     sel.appendChild(optCustom);
   }
 
+  // Default selection: the concrete allowed model in public mode ('smart'
+  // isn't offered there), otherwise 'smart'.
+  const fallbackValue = IS_PUBLIC ? (sel.options[0] && sel.options[0].value) : 'smart';
+
   if (preserve && previous && previous !== 'smart') {
     const found = Array.from(sel.options).some(o => o.value === previous);
     if (found) {
       sel.value = previous;
       customInput.style.display = 'none';
-    } else {
+    } else if (!IS_PUBLIC) {
       sel.value = '__custom__';
       customInput.style.display = '';
       customInput.value = previous;
+    } else {
+      sel.value = fallbackValue;
+      customInput.style.display = 'none';
     }
   } else {
-    sel.value = 'smart';
+    sel.value = fallbackValue;
     customInput.style.display = 'none';
   }
 

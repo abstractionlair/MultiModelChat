@@ -136,6 +136,12 @@ function resolveMaxTokens(provider) {
 function resolveModelId(provider, modelId) {
   const p = (provider || '').toLowerCase();
   if (!modelId || /^(smart|best|default)$/i.test(modelId)) {
+    // In public mode, "smart"/default must resolve to the allowlisted model
+    // for this provider (DEFAULT_MODELS points at pricier non-allowed models).
+    if (publicGuard.isPublicMode()) {
+      const allowed = publicGuard.getAllowedModels().find(a => a.provider === p);
+      if (allowed) return allowed.modelId;
+    }
     return DEFAULT_MODELS[p] || modelId;
   }
   return modelId;
