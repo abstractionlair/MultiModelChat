@@ -1327,8 +1327,13 @@ app.get('/api/health', (req, res) => {
 // Serve minimal static UI
 app.use('/', express.static(path.join(__dirname, '..', 'web')));
 
-app.listen(PORT, () => {
-  console.log(`Multi-model chat server listening on http://localhost:${PORT}`);
+// Bind to BIND_HOST if set (production: 127.0.0.1 so only the nginx reverse
+// proxy reaches the app — reaching it directly would bypass the XFF
+// overwrite and the guard's per-IP limits). Defaults to all interfaces for
+// local dev convenience.
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
+app.listen(PORT, BIND_HOST, () => {
+  console.log(`Multi-model chat server listening on http://${BIND_HOST}:${PORT}`);
 });
 function debugEnabled(req) {
   const q = (req.query && (req.query.debug === '1' || req.query.debug === 'true'));
