@@ -28,6 +28,7 @@ const previewOut = q('#previewOut');
 let pendingEnableAutosave = false;
 let attachedFiles = [];
 let MODEL_INDEX = null;
+let IS_PUBLIC = false;   // set from /api/health before rows are built
 
 const LOCAL_DEFAULT_PROMPT =
   'You are {{modelId}} in a multi-agent conversation with one user and multiple AI agents.' +
@@ -330,11 +331,13 @@ function populateModelSelect(row, preserve = false) {
     sel.appendChild(o);
   }
 
-  // Custom
-  const optCustom = document.createElement('option');
-  optCustom.value = '__custom__';
-  optCustom.textContent = 'Custom…';
-  sel.appendChild(optCustom);
+  // Custom (hidden in public mode — a typed model would just be rejected)
+  if (!IS_PUBLIC) {
+    const optCustom = document.createElement('option');
+    optCustom.value = '__custom__';
+    optCustom.textContent = 'Custom…';
+    sel.appendChild(optCustom);
+  }
 
   if (preserve && previous && previous !== 'smart') {
     const found = Array.from(sel.options).some(o => o.value === previous);
@@ -433,6 +436,17 @@ function makeModelRow() {
       <div class="optsBody"></div>
     </div>
   `;
+
+  // In public mode, only offer providers that are actually available
+  // (the server restricts /api/models to the allowlist).
+  if (IS_PUBLIC && MODEL_INDEX && MODEL_INDEX.providers) {
+    const providerSel = q('.provider', row);
+    const allowedProviders = new Set(Object.keys(MODEL_INDEX.providers));
+    Array.from(providerSel.options).forEach(o => { if (!allowedProviders.has(o.value)) o.remove(); });
+    if (providerSel.options.length && !allowedProviders.has(providerSel.value)) {
+      providerSel.value = providerSel.options[0].value;
+    }
+  }
 
   wireRowEvents(row);
   populateModelSelect(row);
@@ -1049,6 +1063,14 @@ userMsgEl.addEventListener('keypress', (e) => {
 
 // Init
 (async function init() {
+  // Public mode must be known BEFORE rows are built so the picker can be
+  // constrained to the allowlist.
+  let health = null;
+  try {
+    health = await (await fetch('/api/health')).json();
+    IS_PUBLIC = !!(health && health.publicMode);
+  } catch (e) { console.warn('health check failed:', e); }
+
   await loadModelsIndex();
   const container = q('.models-list');
   container.appendChild(makeModelRow());
@@ -1057,11 +1079,9 @@ userMsgEl.addEventListener('keypress', (e) => {
   populatePreviewModel();
   if (previewProviderEl) previewProviderEl.addEventListener('change', populatePreviewModel);
 
-  // Check public mode and show banner
+  // Show the public banner + models note
   try {
-    const healthResp = await fetch('/api/health');
-    const health = await healthResp.json();
-    if (health.publicMode) {
+    if (health && health.publicMode) {
       const banner = document.createElement('div');
       banner.className = 'public-banner';
       banner.textContent = health.banner || 'Public sandbox mode';

@@ -36,6 +36,19 @@ function parseAllowlist() {
   return new Set(items);
 }
 
+// The allowed provider:model pairs (excluding mock housekeeping), for the UI
+// to build a picker that only offers what will actually be accepted.
+function getAllowedModels() {
+  const raw = process.env.PUBLIC_MODEL_ALLOWLIST;
+  const list = (raw && raw.trim())
+    ? raw.split(',').map(s => s.trim()).filter(Boolean)
+    : DEFAULT_ALLOWLIST.slice();
+  return list.map(e => {
+    const i = e.indexOf(':');
+    return { provider: e.slice(0, i).toLowerCase(), modelId: e.slice(i + 1) };
+  }).filter(x => x.provider && x.modelId);
+}
+
 function checkAllowlist(targetModels) {
   if (!isPublicMode()) return null;
 
@@ -521,6 +534,7 @@ module.exports = {
   checkDayLimit,
   getDailyCounter,
   incrementDailyCounter,
+  getAllowedModels,
   peekRatePerCall,
   consumeRatePerCall,
   peekBudget,

@@ -96,11 +96,11 @@ const DEFAULT_MODELS = {
 
 const DEFAULT_PROMPTS = {
   common:
-    'You are {{modelId}} in a multi-agent conversation with one user and multiple AI agents.' +
-    ' This is a simplified conversation, driven off of user messages. There is one round per user message.' +
-    " You will see the full conversation from the beginning: each user message followed by other agents' replies tagged in brackets, e.g., [ModelA]: ..." +
-    ' Your own previous replies appear as assistant messages. Respond once per user turn, primarilly addressing the user directly but also addressing the other models as appropriate.' +
-    ' Coordination: Replies are collected in parallel and shown together; do not claim to "go first" or "start the discussion". Avoid meta-openers; contribute your content directly.',
+    'You are {{modelId}}, one participant in a multi-model chat. A person sends a message and one or more AI models each reply once.' +
+    " You may be shown other models' replies as context, tagged like [ModelName]: — those were written by other models and given to you as input; you did NOT write them." +
+    ' Hard rules: reply exactly once, as yourself, in plain prose addressed to the person.' +
+    ' NEVER output a bracketed [Name]: label. NEVER write, quote, continue, or invent other models\' replies — do not roleplay other participants. Give only your own answer.' +
+    ' Replies are collected in parallel and shown together, so do not claim to "go first" or "start the discussion"; just contribute your content directly.',
   perProvider: {
     openai: process.env.OPENAI_DEFAULT_PROMPT || '',
     anthropic: process.env.ANTHROPIC_DEFAULT_PROMPT || '',
@@ -1218,6 +1218,29 @@ app.get('/api/models', async (req, res) => {
       },
     };
     data.activeModels = activeModels;
+
+    // PUBLIC_MODE: restrict the advertised providers/models/defaults to the
+    // allowlist so the UI picker only offers what will actually be accepted
+    // (otherwise "smart" defaults resolve to disallowed models and the full
+    // catalog is shown but mostly rejected).
+    if (publicGuard.isPublicMode()) {
+      const allowed = publicGuard.getAllowedModels();
+      const byProvider = {};
+      for (const { provider, modelId } of allowed) {
+        (byProvider[provider] = byProvider[provider] || []).push(modelId);
+      }
+      const providers = {};
+      const defaults = {};
+      for (const [prov, ids] of Object.entries(byProvider)) {
+        const orig = (data.providers[prov] && data.providers[prov].models) || [];
+        providers[prov] = { available: true, models: ids.map(id => orig.find(m => m.id === id) || { id }) };
+        defaults[prov] = ids[0];
+      }
+      providers.mock = data.providers.mock || { available: true, models: [{ id: 'mock-echo' }, { id: 'mock-lorem' }] };
+      defaults.mock = 'mock-echo';
+      data.providers = providers;
+      data.defaults = defaults;
+    }
 
     res.json(data);
   } catch (e) {
