@@ -25,6 +25,8 @@ const { validatePath, computeHash, detectMimeType } = require('./utils/files');
 const { runMigrations } = require('./db/migrate');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
+const publicGuard = require('./publicGuard');
+
 const { indexFile } = require('./indexing/indexer');
 const { search } = require('./indexing/search');
 const { buildSystemPrompt } = require('./prompts/builder');
@@ -51,6 +53,10 @@ if (conversations.size > 0) {
 
 // Load from SQLite (either just-migrated or existing data)
 conversations = loadConversationsFromSQLite();
+
+// PUBLIC_MODE: initial wipe and scheduled cleanup
+publicGuard.wipeOldConversations();
+publicGuard.wipeInterval();
 
 function newId(prefix = 'c') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random()
@@ -378,7 +384,7 @@ function getAdapter(provider) {
  * POST /api/projects/:projectId/files
  * Upload or update a file
  */
-app.post('/api/projects/:projectId/files', async (req, res) => {
+app.post('/api/projects/:projectId/files', publicGuard.blockUploadsMiddleware, async (req, res) => {
   const { projectId } = req.params;
   const { path: filePath, content, metadata } = req.body;
 
@@ -671,6 +677,13 @@ app.post('/api/turn', async (req, res) => {
   try {
     const { conversationId, userMessage, targetModels, systemPrompts, textAttachments } = req.body || {};
     const dbg = debugEnabled(req);
+
+    // PUBLIC_MODE: rate limit check
+    const rateErr = publicGuard.rateLimitCheck(req);
+    if (rateErr) {
+      return res.status(rateErr.status).json({ error: rateErr.error, message: rateErr.message, retryAfter: rateErr.retryAfter });
+    }
+
     if (!userMessage || !Array.isArray(targetModels) || targetModels.length === 0) {
       return res.status(400).json({ error: 'userMessage and targetModels are required' });
     }
@@ -758,7 +771,8 @@ app.post('/api/turn', async (req, res) => {
       const modelId = resolveModelId(provider, requestedModelId);
       const name = typeof m.name === 'string' ? m.name.trim() : '';
       const agentId = normalizeAgentId(provider, modelId, m.agentId, index);
-      const options = buildOptions(provider, m.options);
+      let options = buildOptions(provider, m.options);
+      options = publicGuard.clampMaxTokens(options);
       return {
         provider,
         requestedModelId,
@@ -769,6 +783,16 @@ app.post('/api/turn', async (req, res) => {
         index,
       };
     });
+
+    // PUBLIC_MODE: allowlist check (after model ID resolution)
+    const allowlistErr = publicGuard.checkAllowlist(preparedTargets);
+    if (allowlistErr) {
+      return res.status(allowlistErr.status).json({ error: allowlistErr.error, message: allowlistErr.message, allowedModels: allowlistErr.allowedModels });
+    }
+
+    // PUBLIC_MODE: budget check for non-mock providers
+    const budgetStatus = publicGuard.checkDailyBudget();
+    const budgetBlocked = budgetStatus && budgetStatus.blocked;
 
     const searchCapableAgents = [];
     try {
@@ -788,10 +812,18 @@ app.post('/api/turn', async (req, res) => {
       )
       : '';
 
+    // PUBLIC_MODE: track turn
+    publicGuard.trackTurn(req);
+
     // Fan-out to each target model in parallel
     const tasks = preparedTargets.map(async (target) => {
       const { provider, requestedModelId, modelId, name, agentId, options, index } = target;
       const adapter = getAdapter(provider);
+
+      // PUBLIC_MODE: budget kill-switch — real providers blocked, mock still works
+      if (budgetBlocked && provider !== 'mock') {
+        return { agentId, provider, name, modelId, requestedModelId, error: budgetStatus.message, tokenUsage: undefined };
+      }
       // Build system prompt with file context
       let system = buildSystemPrompt({
         modelId,
@@ -830,6 +862,12 @@ app.post('/api/turn', async (req, res) => {
         const { text, usage } = result;
         const maxTokens = options && options.maxTokens !== undefined ? options.maxTokens : resolveMaxTokens(provider);
         const tokenUsage = summarizeUsage(provider, usage, maxTokens);
+
+        // PUBLIC_MODE: record token usage for budget tracking
+        if (usage) {
+          const totalTokens = tokenUsage && (tokenUsage.total || tokenUsage.used);
+          publicGuard.recordUsage(provider, totalTokens);
+        }
         if (result && result.providerState) {
           conv.perModelState = conv.perModelState || {};
           conv.perModelState[stateKey] = result.providerState;
@@ -1202,7 +1240,8 @@ app.get('/api/health', (req, res) => {
       status: 'ok',
       database: 'connected',
       conversations: conversations.size,
-      uptime: process.uptime()
+      uptime: process.uptime(),
+      ...publicGuard.publicModeConfig(),
     });
   } catch (e) {
     res.status(500).json({

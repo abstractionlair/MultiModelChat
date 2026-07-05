@@ -1057,6 +1057,23 @@ userMsgEl.addEventListener('keypress', (e) => {
   populatePreviewModel();
   if (previewProviderEl) previewProviderEl.addEventListener('change', populatePreviewModel);
 
+  // Check public mode and show banner
+  try {
+    const healthResp = await fetch('/api/health');
+    const health = await healthResp.json();
+    if (health.publicMode) {
+      const banner = document.createElement('div');
+      banner.className = 'public-banner';
+      banner.textContent = health.banner || 'Public sandbox mode';
+      const containerEl = q('.container');
+      if (containerEl) {
+        containerEl.insertBefore(banner, containerEl.firstChild);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to check public mode:', e);
+  }
+
   // Expose for testing
   window.MODEL_INDEX = MODEL_INDEX;
   window.populatePreviewModel = populatePreviewModel;
