@@ -42,6 +42,20 @@ app.set('trust proxy', 1);
 const publicGuard = require('./publicGuard');
 const bodyLimit = publicGuard.isPublicMode() ? '64kb' : '50mb';
 app.use(express.json({ limit: bodyLimit }));
+
+// Body-parser errors (e.g. entity.too.large, malformed JSON) otherwise fall
+// through to Express's default HTML handler, which leaks a node_modules
+// filesystem path in the stack. Return generic JSON instead.
+app.use((err, req, res, next) => {
+  if (err && (err.type || err.status === 413 || err instanceof SyntaxError)) {
+    const status = err.status || err.statusCode || 400;
+    if (publicGuard.isPublicMode()) {
+      return res.status(status).json({ error: status === 413 ? 'payload_too_large' : 'bad_request', message: status === 413 ? 'Request body too large.' : 'Malformed request.' });
+    }
+    return res.status(status).json({ error: 'bad_request', message: err.message });
+  }
+  next(err);
+});
 app.use(cors());
 
 // In-memory store
@@ -845,8 +859,14 @@ app.post('/api/turn', async (req, res) => {
     const realTargetCount = realTargets.length;
     const effectiveClamp = clampValue || 700;
 
-    if (publicGuard.isPublicMode() && realTargetCount > 0) {
-      // FIX 8: Atomic budget reservation
+    // PUBLIC_MODE: was the budget ALREADY spent before this request? Check
+    // BEFORE reserving, else this request's own reservation makes an exact-fit
+    // turn appear over-budget and self-blocks.
+    const budgetStatus = publicGuard.checkDailyBudget();
+    const budgetBlocked = budgetStatus && budgetStatus.blocked;
+
+    if (publicGuard.isPublicMode() && realTargetCount > 0 && !budgetBlocked) {
+      // FIX 8: Atomic budget reservation (blocks if THIS turn would exceed)
       const budgetRes = publicGuard.reserveBudget(realTargetCount, effectiveClamp);
       if (budgetRes && budgetRes.blocked) {
         return res.status(429).json({ error: 'budget_exceeded', message: budgetRes.message });
@@ -859,10 +879,6 @@ app.post('/api/turn', async (req, res) => {
         return res.status(rateErr2.status).json({ error: rateErr2.error, message: rateErr2.message, retryAfter: rateErr2.retryAfter });
       }
     }
-
-    // PUBLIC_MODE: budget check for non-mock providers (backstop)
-    const budgetStatus = publicGuard.checkDailyBudget();
-    const budgetBlocked = budgetStatus && budgetStatus.blocked;
 
     // FIX 6b: Don't double-count turns — skip trackTurn when per-call counting is active
     // trackTurn is now handled by consumeRatePerCall for real targets

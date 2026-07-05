@@ -32,12 +32,12 @@ function req(port, method, p, body, headers = {}) {
   });
 }
 
-function startServer(port, publicMode) {
+function startServer(port, publicMode, overrides = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mmc-int-'));
   const env = { ...process.env, PORT: String(port),
     OPENAI_API_KEY: 'fake', ANTHROPIC_API_KEY: 'fake', GOOGLE_API_KEY: 'fake', XAI_API_KEY: 'fake',
     DB_PATH: path.join(tmp, 'db.sqlite'), STORAGE_DIR: path.join(tmp, 'storage'), TRANSCRIPTS_DIR: path.join(tmp, 'tx'),
-    PUBLIC_TURNS_PER_MIN: '100', PUBLIC_MAX_TARGETS_PER_TURN: '4', PUBLIC_MAX_MESSAGE_CHARS: '8192' };
+    PUBLIC_TURNS_PER_MIN: '100', PUBLIC_MAX_TARGETS_PER_TURN: '4', PUBLIC_MAX_MESSAGE_CHARS: '8192', ...overrides };
   if (publicMode) env.PUBLIC_MODE = '1'; else delete env.PUBLIC_MODE;
   const proc = spawn('node', [path.join(__dirname, 'server.js')], { env, stdio: 'ignore' });
   return { proc, tmp };
@@ -99,7 +99,27 @@ async function main() {
     let codes = [];
     for (let i = 0; i < 6; i++) codes.push((await req(P, 'POST', '/api/turn', { userMessage: 'x', targetModels: [{ provider: 'mock', modelId: 'mock-echo' }] }, { 'X-Forwarded-For': `5.5.5.${i}` })).status);
     ok(codes.every(c => c === 200 || c === 429), `spoofed XFF did not error the server (codes: ${codes.join(',')})`);
+
+    // Oversized body returns generic JSON, NOT an HTML stack with a filesystem path
+    const big = await req(P, 'POST', '/api/turn', { userMessage: 'x', pad: 'y'.repeat(80000), targetModels: [{ provider: 'mock', modelId: 'mock-echo' }] });
+    ok(big.status === 413 || big.status === 400, `oversized body rejected (${big.status})`);
+    ok(typeof big.body === 'object' && !/node_modules|\/home\//.test(JSON.stringify(big.body)), 'oversized-body error is generic JSON, no filesystem path');
   } finally { pub.proc.kill(); }
+
+  // ---- Rate double-count + budget exact-fit (dedicated small-limit server) ----
+  const P2 = 3973;
+  const tight = startServer(P2, true, { PUBLIC_TURNS_PER_MIN: '3', PUBLIC_DAILY_TOKEN_BUDGET: '1400', PUBLIC_MAX_TOKENS_PER_TURN: '700' });
+  try {
+    await waitUp(P2);
+    console.log('\nrate/budget accounting (min=3 calls, budget=1400=2x700)');
+    // 2 mock targets consume 0 real slots; then a disallowed-real is 400 — use mock to prove mock is unmetered by per-call rate
+    // Real-call counting: with only mock available (no real keys dispatch), assert exact-fit budget dispatches.
+    // Exact-fit budget: allowlist has no real key funded here, so use the reservation path via a real allowed model that errors on fake key but still reserves.
+    let a = await req(P2, 'POST', '/api/turn', { userMessage: 'x', targetModels: [{ provider: 'openai', modelId: 'gpt-4o-mini' }, { provider: 'openai', modelId: 'gpt-4o-mini' }] });
+    ok(a.status === 200, `exact-fit budget turn (2x700=1400) dispatches, not self-blocked (${a.status})`);
+    const spent = a.body && a.body.results && a.body.results.every(r => !/budget spent/i.test(r.text || r.error || ''));
+    ok(spent, 'exact-fit turn did not falsely report "budget spent"');
+  } finally { tight.proc.kill(); }
 
   // ---- PUBLIC_MODE unset (baseline must be fully inert) ----
   const B = 3972;

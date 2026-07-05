@@ -147,12 +147,16 @@ function checkMinuteLimit(ip) {
     return {
       status: 429,
       error: 'rate_limit_minute',
-      message: `Too many requests. You can send up to ${limit} turns per minute. Please wait ${retryAfter}s and try again.`,
+      message: `Too many requests. You can send up to ${limit} model calls per minute. Please wait ${retryAfter}s and try again.`,
       retryAfter,
     };
   }
 
-  entries.push(now);
+  // PEEK ONLY — do not consume here. This is the early precheck; the actual
+  // slots are consumed per-real-call in consumeRatePerCall(). Consuming here
+  // too double-counted every turn (a 2-call turn ate 3 slots). Mock-only
+  // turns consume no rate slots at this layer (free); request-rate DoS from
+  // mock spam is bounded by nginx limit_req at the edge.
   return null;
 }
 

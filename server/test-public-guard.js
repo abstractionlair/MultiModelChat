@@ -189,23 +189,32 @@ cleanGuardUsage();
 delete require.cache[require.resolve('./publicGuard')];
 const guard4 = require('./publicGuard');
 
-// Simulate requests from the same IP
+// Simulate requests from the same IP (minute limit is 3 model calls)
 const req = { headers: {}, ip: '10.0.0.1', connection: { remoteAddress: '10.0.0.1' } };
 
-// First 3 should pass (minute limit is 3)
-assertEqual(guard4.rateLimitCheck(req), null, 'request 1 passes');
-assertEqual(guard4.rateLimitCheck(req), null, 'request 2 passes');
-assertEqual(guard4.rateLimitCheck(req), null, 'request 3 passes');
+// rateLimitCheck is a PEEK — it never consumes, so it stays null while under
+// limit no matter how many times it's called (regression: it used to consume,
+// double-counting every turn against consumeRatePerCall).
+assertEqual(guard4.rateLimitCheck(req), null, 'peek 1 does not consume');
+assertEqual(guard4.rateLimitCheck(req), null, 'peek 2 does not consume');
+assertEqual(guard4.rateLimitCheck(req), null, 'peek 3 does not consume (still empty)');
 
-// 4th should be rate limited
-let rateResult = guard4.rateLimitCheck(req);
-assert(rateResult && rateResult.status === 429, 'request 4 hits minute rate limit (429)');
-assertEqual(rateResult && rateResult.error, 'rate_limit_minute', 'rate limit error is rate_limit_minute');
-assert(rateResult && rateResult.retryAfter > 0, 'retryAfter is positive');
+// The real accounting is per-call: a 2-call turn then a 1-call turn = exactly
+// 3 calls, which must FIT a limit of 3 (the reviewer's over-count repro).
+assertEqual(guard4.consumeRatePerCall('10.0.0.1', 2), null, '2-call turn consumes and fits');
+assertEqual(guard4.consumeRatePerCall('10.0.0.1', 1), null, '1-call turn fits (2+1 == limit 3)');
 
-// Different IP should pass
-const req2 = { headers: {}, ip: '10.0.0.2', connection: { remoteAddress: '10.0.0.2' } };
-assertEqual(guard4.rateLimitCheck(req2), null, 'different IP passes rate limit');
+// Now the window is full: the peek rejects, and a further real call is 429.
+let peek = guard4.rateLimitCheck(req);
+assert(peek && peek.status === 429, 'peek now reports 429 (window full)');
+assertEqual(peek && peek.error, 'rate_limit_minute', 'peek error is rate_limit_minute');
+assert(peek && peek.retryAfter > 0, 'retryAfter is positive');
+let over = guard4.consumeRatePerCall('10.0.0.1', 1);
+assert(over && over.status === 429, '4th model call over limit -> 429');
+
+// Different IP is independent.
+assertEqual(guard4.rateLimitCheck({ headers: {}, ip: '10.0.0.2', connection: { remoteAddress: '10.0.0.2' } }), null, 'different IP passes');
+assertEqual(guard4.consumeRatePerCall('10.0.0.2', 2), null, 'different IP consumes independently');
 
 // Day limit (with cleaned counters, inject fake data)
 cleanGuardUsage();
