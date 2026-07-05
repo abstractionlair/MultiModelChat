@@ -222,8 +222,11 @@ function recordUsage(provider, tokens) {
   `).run(date, tokensVal, now, tokensVal, now);
 }
 
-// FIX 6b: Per-call rate and budget tracking
-function consumeRatePerCall(ip, realTargetCount) {
+// FIX 6b: Per-call rate tracking. Split into a non-mutating peek and a
+// mutating consume so the caller can peek rate AND budget before committing
+// EITHER — otherwise a rate-limited request could still reserve budget (and
+// vice-versa), letting a griefer burn the global budget with rejected turns.
+function peekRatePerCall(ip, realTargetCount) {
   if (!isPublicMode()) return null;
   if (realTargetCount <= 0) return null;
 
@@ -235,41 +238,36 @@ function consumeRatePerCall(ip, realTargetCount) {
   const windowMs = 60 * 1000;
   const now = getUtcDateMs();
 
-  // Per-minute: consume N slots for N real calls
   let entries = minuteCounters.get(ip);
-  if (!entries) {
-    entries = [];
-    minuteCounters.set(ip, entries);
-  }
+  if (!entries) { entries = []; minuteCounters.set(ip, entries); }
   const cutoff = now - windowMs;
-  while (entries.length > 0 && entries[0] < cutoff) {
-    entries.shift();
-  }
+  while (entries.length > 0 && entries[0] < cutoff) entries.shift(); // expiry cleanup only
 
   if (entries.length + realTargetCount > minLimit) {
     const oldest = entries[0];
     const retryAfter = Math.ceil((oldest + windowMs - now) / 1000);
-    return {
-      status: 429,
-      error: 'rate_limit_minute',
-      message: `Too many model calls. You can send up to ${minLimit} model calls per minute. Please wait ${retryAfter}s and try again.`,
-      retryAfter,
-    };
+    return { status: 429, error: 'rate_limit_minute',
+      message: `Too many model calls. You can send up to ${minLimit} model calls per minute. Please wait ${retryAfter}s and try again.`, retryAfter };
   }
-  for (let i = 0; i < realTargetCount; i++) {
-    entries.push(now);
-  }
-
-  // Per-day: consume N turns for N real calls
-  const date = getUtcDate();
   const counter = getDailyCounter(ip);
   if (counter.turns + realTargetCount > dayLimit) {
-    return {
-      status: 429,
-      error: 'rate_limit_day',
-      message: `Daily model-call limit reached (${dayLimit} per day). Please try again tomorrow.`,
-    };
+    return { status: 429, error: 'rate_limit_day',
+      message: `Daily model-call limit reached (${dayLimit} per day). Please try again tomorrow.` };
   }
+  return null;
+}
+
+function consumeRatePerCall(ip, realTargetCount) {
+  if (!isPublicMode()) return null;
+  if (realTargetCount <= 0) return null;
+  const blocked = peekRatePerCall(ip, realTargetCount);
+  if (blocked) return blocked;
+
+  const now = getUtcDateMs();
+  const entries = minuteCounters.get(ip) || (minuteCounters.set(ip, []), minuteCounters.get(ip));
+  for (let i = 0; i < realTargetCount; i++) entries.push(now);
+
+  const date = getUtcDate();
   const nowMs = Date.now();
   db.prepare(`
     INSERT INTO guard_usage (utc_date, ip, key_type, turns, tokens, updated_at)
@@ -283,27 +281,29 @@ function consumeRatePerCall(ip, realTargetCount) {
 }
 
 // FIX 8: Atomic budget reservation before dispatch
-function reserveBudget(realTargetCount, clampValue) {
+function peekBudget(realTargetCount, clampValue) {
   if (!isPublicMode()) return null;
-
   const maxTokens = parseInt(process.env.PUBLIC_DAILY_TOKEN_BUDGET, 10);
   const budget = Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : 2000000;
-
   const date = getUtcDate();
   const row = db.prepare(
     'SELECT tokens FROM guard_usage WHERE utc_date = ? AND ip = ? AND key_type = ?'
   ).get(date, 'GLOBAL', 'daily_budget');
-
   const used = row ? row.tokens : 0;
   const estimate = realTargetCount * clampValue;
-
   if (used + estimate > budget) {
-    return {
-      blocked: true,
-      message: 'Daily budget would be exceeded by this request — mock model still available',
-    };
+    return { blocked: true, message: 'Daily budget would be exceeded by this request — mock model still available' };
   }
+  return null;
+}
 
+function reserveBudget(realTargetCount, clampValue) {
+  if (!isPublicMode()) return null;
+  const blocked = peekBudget(realTargetCount, clampValue);
+  if (blocked) return blocked;
+
+  const date = getUtcDate();
+  const estimate = realTargetCount * clampValue;
   // Reserve: add the estimate immediately (will be reconciled later)
   const now = Date.now();
   db.prepare(`
@@ -515,7 +515,9 @@ module.exports = {
   checkDayLimit,
   getDailyCounter,
   incrementDailyCounter,
+  peekRatePerCall,
   consumeRatePerCall,
+  peekBudget,
   reserveBudget,
   reconcileBudget,
   recordUsage,

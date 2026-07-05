@@ -760,6 +760,28 @@ app.post('/api/turn', async (req, res) => {
       return res.status(allowlistErr.status).json({ error: allowlistErr.error, message: allowlistErr.message, allowedModels: allowlistErr.allowedModels });
     }
 
+    // PUBLIC_MODE rate + budget guards — run BEFORE any persistence or
+    // reservation, so a rejected turn neither reserves budget nor writes a
+    // conversation. Peek BOTH, then commit BOTH (no await between) so a
+    // rate-limit rejection can't leave budget reserved, or vice-versa.
+    const realTargetCount = preparedTargets.filter(t => t.provider !== 'mock').length;
+    const effectiveClamp = clampValue || 700;
+    const budgetStatus = publicGuard.checkDailyBudget();   // already-spent before this turn?
+    const budgetBlocked = budgetStatus && budgetStatus.blocked;
+    if (publicGuard.isPublicMode() && realTargetCount > 0 && !budgetBlocked) {
+      const ip = publicGuard.getClientIp(req);
+      const ratePeek = publicGuard.peekRatePerCall(ip, realTargetCount);
+      if (ratePeek) {
+        return res.status(ratePeek.status).json({ error: ratePeek.error, message: ratePeek.message, retryAfter: ratePeek.retryAfter });
+      }
+      const budgetPeek = publicGuard.peekBudget(realTargetCount, effectiveClamp);
+      if (budgetPeek && budgetPeek.blocked) {
+        return res.status(429).json({ error: 'budget_exceeded', message: budgetPeek.message });
+      }
+      publicGuard.consumeRatePerCall(ip, realTargetCount);
+      publicGuard.reserveBudget(realTargetCount, effectiveClamp);
+    }
+
     // Now safe to mutate state — load or create conversation
     let convId = conversationId;
     let conv;
@@ -854,34 +876,8 @@ app.post('/api/turn', async (req, res) => {
       )
       : '';
 
-    // FIX 6 + FIX 8: Count real targets, reserve budget, consume rate per call
-    const realTargets = preparedTargets.filter(t => t.provider !== 'mock');
-    const realTargetCount = realTargets.length;
-    const effectiveClamp = clampValue || 700;
-
-    // PUBLIC_MODE: was the budget ALREADY spent before this request? Check
-    // BEFORE reserving, else this request's own reservation makes an exact-fit
-    // turn appear over-budget and self-blocks.
-    const budgetStatus = publicGuard.checkDailyBudget();
-    const budgetBlocked = budgetStatus && budgetStatus.blocked;
-
-    if (publicGuard.isPublicMode() && realTargetCount > 0 && !budgetBlocked) {
-      // FIX 8: Atomic budget reservation (blocks if THIS turn would exceed)
-      const budgetRes = publicGuard.reserveBudget(realTargetCount, effectiveClamp);
-      if (budgetRes && budgetRes.blocked) {
-        return res.status(429).json({ error: 'budget_exceeded', message: budgetRes.message });
-      }
-
-      // FIX 6b: Per-call rate limiting
-      const ip = publicGuard.getClientIp(req);
-      const rateErr2 = publicGuard.consumeRatePerCall(ip, realTargetCount);
-      if (rateErr2) {
-        return res.status(rateErr2.status).json({ error: rateErr2.error, message: rateErr2.message, retryAfter: rateErr2.retryAfter });
-      }
-    }
-
-    // FIX 6b: Don't double-count turns — skip trackTurn when per-call counting is active
-    // trackTurn is now handled by consumeRatePerCall for real targets
+    // FIX 6b: Don't double-count turns — rate is counted per real call by the
+    // guard block above (which ran BEFORE persistence), not by trackTurn.
 
     const tasks = preparedTargets.map(async (target) => {
       const { provider, requestedModelId, modelId, name, agentId, options, index } = target;

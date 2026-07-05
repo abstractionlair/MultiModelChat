@@ -121,6 +121,23 @@ async function main() {
     ok(spent, 'exact-fit turn did not falsely report "budget spent"');
   } finally { tight.proc.kill(); }
 
+  // ---- Rate-limited turn must NOT reserve budget or persist (griefing vector) ----
+  const P3 = 3974;
+  const grief = startServer(P3, true, { PUBLIC_TURNS_PER_MIN: '2', PUBLIC_DAILY_TOKEN_BUDGET: '100000', PUBLIC_MAX_TOKENS_PER_TURN: '700' });
+  try {
+    await waitUp(P3);
+    console.log('\nrate-limited turn leaves budget + storage clean');
+    // First 2-real turn consumes the 2-call minute budget.
+    let first = await req(P3, 'POST', '/api/turn', { userMessage: 'x', targetModels: [{ provider: 'openai', modelId: 'gpt-4o-mini' }, { provider: 'openai', modelId: 'gpt-4o-mini' }] });
+    ok(first.status === 200, `first 2-call turn admitted (${first.status})`);
+    const before = (await req(P3, 'GET', '/api/conversations')).body;
+    // Second 2-real turn exceeds the 2/min cap -> 429 and must reserve nothing / persist nothing.
+    let second = await req(P3, 'POST', '/api/turn', { userMessage: 'y', targetModels: [{ provider: 'openai', modelId: 'gpt-4o-mini' }, { provider: 'openai', modelId: 'gpt-4o-mini' }] });
+    ok(second.status === 429, `second turn rate-limited 429 (${second.status})`);
+    const after = (await req(P3, 'GET', '/api/conversations')).body;
+    ok(after && before && after.total === before.total, `rate-limited turn persisted no conversation (before=${before && before.total}, after=${after && after.total})`);
+  } finally { grief.proc.kill(); }
+
   // ---- PUBLIC_MODE unset (baseline must be fully inert) ----
   const B = 3972;
   const base = startServer(B, false);
