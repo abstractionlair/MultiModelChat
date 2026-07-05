@@ -768,7 +768,7 @@ app.post('/api/turn', async (req, res) => {
     const preparedTargets = targetModels.map((m, index) => {
       const provider = (m.provider || '').toLowerCase();
       const requestedModelId = m.modelId;
-      const modelId = resolveModelId(provider, requestedModelId);
+      const modelId = (resolveModelId(provider, requestedModelId) || '').toLowerCase();
       const name = typeof m.name === 'string' ? m.name.trim() : '';
       const agentId = normalizeAgentId(provider, modelId, m.agentId, index);
       let options = buildOptions(provider, m.options);

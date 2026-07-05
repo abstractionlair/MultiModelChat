@@ -38,7 +38,7 @@ function checkAllowlist(targetModels) {
 
   for (const target of targetModels) {
     const provider = (target.provider || '').toLowerCase();
-    const modelId = (target.resolvedModelId || target.modelId || '').toLowerCase();
+    const modelId = (target.modelId || '').toLowerCase();
     const key = provider === 'mock' ? `mock:${modelId}` : `${provider}:${modelId}`;
     const wildcard = provider === 'mock' ? 'mock:*' : null;
 

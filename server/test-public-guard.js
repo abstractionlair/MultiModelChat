@@ -109,6 +109,48 @@ assertEqual(result, null, 'mixed valid + mock passes');
 
 console.log();
 
+// ===== Test 2b: Allowlist case-insensitivity (regression) =====
+console.log('2b. Allowlist case-insensitivity');
+setPublicMode(true);
+process.env.PUBLIC_MODEL_ALLOWLIST = 'openai:gpt-4o-mini,anthropic:claude-3-haiku-20240307';
+cleanGuardUsage();
+
+delete require.cache[require.resolve('./publicGuard')];
+const guard2b = require('./publicGuard');
+
+// Allowed model, non-matching case: provider and modelId should be normalized
+result = guard2b.checkAllowlist([{ provider: 'OpenAI', modelId: 'GPT-4O-MINI' }]);
+assertEqual(result, null, 'OpenAI:GPT-4O-MINI (uppercase) passes — normalized to lowercase');
+
+result = guard2b.checkAllowlist([{ provider: 'OPENAI', modelId: 'gpt-4o-mini' }]);
+assertEqual(result, null, 'OPENAI:gpt-4o-mini (uppercase provider) passes');
+
+result = guard2b.checkAllowlist([{ provider: 'openai', modelId: 'GPT-4O-MINI' }]);
+assertEqual(result, null, 'openai:GPT-4O-MINI (uppercase modelId) passes');
+
+result = guard2b.checkAllowlist([{ provider: 'ANTHROPIC', modelId: 'CLAUDE-3-HAIKU-20240307' }]);
+assertEqual(result, null, 'ANTHROPIC:CLAUDE-3-HAIKU-20240307 (all uppercase) passes');
+
+// Non-allowed model, non-matching case: must be rejected
+result = guard2b.checkAllowlist([{ provider: 'OpenAI', modelId: 'GPT-5' }]);
+assert(result && result.status === 400, 'OpenAI:GPT-5 (uppercase, not in allowlist) rejected with 400');
+
+result = guard2b.checkAllowlist([{ provider: 'ANTHROPIC', modelId: 'CLAUDE-OPUS-4' }]);
+assert(result && result.status === 400, 'ANTHROPIC:CLAUDE-OPUS-4 (uppercase, not in allowlist) rejected');
+
+// Edge: case-variant on a DEFAULT allowlist entry (no env var set)
+delete process.env.PUBLIC_MODEL_ALLOWLIST;
+delete require.cache[require.resolve('./publicGuard')];
+const guard2c = require('./publicGuard');
+
+result = guard2c.checkAllowlist([{ provider: 'MOCK', modelId: 'MOCK-ECHO' }]);
+assertEqual(result, null, 'MOCK:MOCK-ECHO (uppercase) always allowed (mock bypass)');
+
+result = guard2c.checkAllowlist([{ provider: 'OPENAI', modelId: 'GPT-4O-MINI' }]);
+assertEqual(result, null, 'OPENAI:GPT-4O-MINI matches default allowlist entry (case-insensitive)');
+
+console.log();
+
 // ===== Test 3: Clamp applied =====
 console.log('3. Max-tokens clamp');
 process.env.PUBLIC_MAX_TOKENS_PER_TURN = '300';
