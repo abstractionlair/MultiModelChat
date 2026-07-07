@@ -290,7 +290,7 @@ await client.responses.create({
 If you want, I can drop in **ready-to-run** Node cURL scripts for all four providers in one folder with the exact request/response logging for `usage` and the (optional) opaque carry-forward fields.
 
 [1]: https://platform.openai.com/docs/models/compare?model=o4-mini&utm_source=chatgpt.com "Compare models - OpenAI API"
-[2]: https://platform.openai.com/docs/api-reference/responses?mkt_tok=mjuylvjgty0ymjcaaags7fxnm_jn52tiiblvxijdvnje4z15laurtxpmhdyr-rk6pyoekdqlz7r7dm-swlo3c73qabibmcilqp0tvnjrp1wjq9ckpoz93welxhdn4euei3bosq&mkt_tok=mjuylvjgty0ymjcaaags7fxnm_jn52tiiblvxijdvnje4z15laurtxpmhdyr-rk6pyoekdqlz7r7dm-swlo3c73qabibmcilqp0tvnjrp1wjq9ckpoz93welxhdn4euei3bosq&utm_cta=website-marketplace-page-featured&utm_source=chatgpt.com "API Reference"
+[2]: https://platform.openai.com/docs/api-reference/responses?mkt_tok=<redacted>&mkt_tok=<redacted>&utm_cta=website-marketplace-page-featured&utm_source=chatgpt.com "API Reference"
 [3]: https://platform.openai.com/docs/changelog/settings/organization/general?utm_source=chatgpt.com "Changelog - OpenAI API"
 [4]: https://github.com/openai/openai-node?utm_source=chatgpt.com "Official JavaScript / TypeScript library for the OpenAI API"
 [5]: https://github.com/openai/completions-responses-migration-pack?utm_source=chatgpt.com "openai/completions-responses-migration-pack"
