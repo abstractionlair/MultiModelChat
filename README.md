@@ -12,6 +12,7 @@ Quick start
    - `GOOGLE_API_KEY=...`
    - `XAI_API_KEY=...`
    - Optional: `PORT=3000`
+   - Optional: `BIND_HOST=127.0.0.1` (default). The server binds to localhost only; set `BIND_HOST=0.0.0.0` explicitly to listen on all interfaces. Production deploys behind a reverse proxy (e.g. nginx) on the same host should keep the localhost default; a deployment that must be reached directly from other hosts needs `BIND_HOST=0.0.0.0` set in its environment.
 
 2) Install deps and start:
    - `npm install`
@@ -62,6 +63,7 @@ Notes
 - This MVP is non‑streaming. SSE streaming can be added later.
 - The Anthropic Messages API requires `anthropic-version` header; usage in response may vary.
 - No persistence or auth; suitable for local testing only.
+- The server binds to `127.0.0.1` by default (see `BIND_HOST` above), so it is not reachable from other machines unless you opt in.
 - OpenAI adapter uses the Responses API for reasoning features; forwards `options.reasoning.effort`. When the provider returns encrypted reasoning state, it is stored and sent on the next turn automatically.
 - Some reasoning models reject sampling params like `temperature`; the server omits them by default. If a model supports it and you want to set it, pass via `options.extraBody.temperature`.
 - Anthropic adapter supports extended thinking via `options.thinking` or env `ANTHROPIC_THINKING_BUDGET`.
