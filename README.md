@@ -1,11 +1,19 @@
-Multi-Model Chat MVP
+# Multi-Model Chat MVP
 
-What this is
-- Minimal Node/Express server that fans out each user turn to multiple models (OpenAI and Anthropic adapters included) while ensuring each model sees the user message plus all prior context reconstructed from the beginning, without duplicating its own replies.
+![Multi-model chat UI](docs/images/chat-ui.png)
+
+One conversation, several frontier models at once: each turn fans out to the models you've configured — Claude, GPT, Gemini, Grok — and each model sees the full history, including what the other models said. Conversations belong to projects, files can be attached for context, and both files and conversation history are full-text searchable. There's a live sandbox at https://chat.abstractionlair.xyz.
+
+I built it because comparing models used to mean pasting the same question into three separate chat tabs and reconciling the answers by hand. This replaces that: one send, all replies side by side, and each model can react to the others.
+
+It's in daily use. The next phase — code execution, so models can work on attached files rather than just read them — is specced but not started. The public sandbox deliberately runs cheap models (GPT-5 nano, Gemini 2.5 Flash-Lite) behind cost controls; run your own instance with your own keys for the full lineup.
+
+## How it works
+- Minimal Node/Express server that fans out each user turn to multiple models (OpenAI, Anthropic, Google, and xAI adapters included) while ensuring each model sees the user message plus all prior context reconstructed from the beginning, without duplicating its own replies.
 - Supports a `smart`/`best`/`default` model alias that resolves to recommended top models per provider (override via env).
 - Tiny static HTML page to exercise the API quickly without CORS issues (served from the same origin).
 
-Quick start
+## Quick start
 1) Provide API keys via environment:
    - `OPENAI_API_KEY=...`
    - `ANTHROPIC_API_KEY=...`
@@ -31,7 +39,7 @@ Quick start
   - Enable the "debug" checkbox to print server-side request/response summaries to the console for that turn (or set `DEBUG_REQUESTS=1`).
   - Export: use “Download Markdown” to save the conversation, or enable “Auto‑save to server (Markdown)” to continuously write to `TRANSCRIPTS_DIR`.
 
-API
+## API
 - POST `/api/turn`
   - Body: `{ conversationId?, userMessage: string, targetModels: [{ provider: 'openai'|'anthropic'|'google'|'xai', modelId: string, name?: string, agentId?: string, options?: { reasoning?: { effort: 'low'|'medium'|'high' }, thinking?: { type: 'enabled', budget_tokens?: number }, extraBody?: object, extraHeaders?: object, maxTokens?: number } }], systemPrompts?: { common?: string, perProvider?: { openai?: string, anthropic?: string, google?: string, xai?: string }, perAgent?: Record<string, string> } }`
   - `agentId` is optional but recommended when you send multiple copies of the same provider/model; it keeps per-agent state isolated across turns. The UI auto-generates one per row and also lets you rename agents via `name`.
@@ -44,14 +52,14 @@ API
   - Body: `{ enabled: boolean, format?: 'md'|'json' }`
   - Toggles continuous server-side writing to `TRANSCRIPTS_DIR`. Response includes `{ path }` when enabled.
 
-Conversation model
-- In-memory only. Each round stores the user message and all agent replies.
+## Conversation model
+- Persisted to SQLite and loaded at startup. Each round stores the user message and all agent replies.
 - Every turn, each model receives a reconstruction of the full conversation from the start:
   - For each prior round: a user message with the user’s text plus other agents’ replies tagged as `[ModelId]: ...` (excluding the target model’s own), followed by the target model’s prior reply as an `assistant` message when available.
   - For the current turn: a user message with the new user text.
   - Tags now prefer the agent’s custom name (falling back to the model id) so multiple instances of the same model stay distinguishable in both the provider view and UI transcript.
 
-Files
+## Files
 - `server/server.js` — Express app and per-model view builder
 - `server/adapters/openai.js` — OpenAI Chat Completions adapter
 - `server/adapters/anthropic.js` — Anthropic Messages API adapter
@@ -59,10 +67,10 @@ Files
 - `server/adapters/xai.js` — xAI Grok Chat Completions adapter
 - `web/index.html` — Minimal UI
 
-Notes
+## Notes
 - This MVP is non‑streaming. SSE streaming can be added later.
 - The Anthropic Messages API requires `anthropic-version` header; usage in response may vary.
-- No persistence or auth; suitable for local testing only.
+- No auth built in. Conversations and project files persist to SQLite; the public deployment adds a model allowlist and cost controls (`PUBLIC_MODE=1`).
 - The server binds to `127.0.0.1` by default (see `BIND_HOST` above), so it is not reachable from other machines unless you opt in.
 - OpenAI adapter uses the Responses API for reasoning features; forwards `options.reasoning.effort`. When the provider returns encrypted reasoning state, it is stored and sent on the next turn automatically.
 - Some reasoning models reject sampling params like `temperature`; the server omits them by default. If a model supports it and you want to set it, pass via `options.extraBody.temperature`.
@@ -71,14 +79,14 @@ Notes
 - Token caps: optional per-provider defaults via `OPENAI_MAX_OUTPUT_TOKENS`, `ANTHROPIC_MAX_OUTPUT_TOKENS`, `GOOGLE_MAX_OUTPUT_TOKENS`, `XAI_MAX_OUTPUT_TOKENS`. If unset, no cap is sent (OpenAI/Google/xAI). Anthropic requires `max_tokens`; if none is provided, the server uses 8192 by default.
 - Transcript exports: set `TRANSCRIPTS_DIR` (default `transcripts`). Markdown export includes round headings, user then per-model replies, and attachment titles when present.
 
-Model alias resolution
+## Model alias resolution
 - Server resolves `modelId` of `smart|best|default` to defaults per provider:
   - openai → `process.env.OPENAI_DEFAULT_MODEL` or `gpt-5`
   - anthropic → `process.env.ANTHROPIC_DEFAULT_MODEL` or `claude-opus-4-1`
   - google → `process.env.GOOGLE_DEFAULT_MODEL` or `gemini-2.5-pro`
   - xai → `process.env.XAI_DEFAULT_MODEL` or `grok-4`
 
-Reasoning and opaque carry-forward
+## Reasoning and opaque carry-forward
 - OpenAI (Responses): set per model `options.reasoning = { effort: 'high' }`. The server extracts `encrypted_content` from reasoning blocks and forwards it next turn automatically.
 - Anthropic (Messages): enable via `options.thinking = { type: 'enabled', budget_tokens: <n> }` or env `ANTHROPIC_THINKING_BUDGET`. No opaque carry-forward is required; Anthropic handles thinking history internally when you pass prior messages.
 - Advanced: env JSON-path overrides are available if provider fields differ: `OPENAI_STATE_RESPONSE_PATH`, `OPENAI_STATE_REQUEST_PATH`, `ANTHROPIC_STATE_RESPONSE_PATH`, `ANTHROPIC_STATE_REQUEST_PATH`.
