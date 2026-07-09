@@ -24,6 +24,7 @@ It's in daily use. The next phase — code execution, so models can work on atta
 
 2) Install deps and start:
    - `npm install`
+   - If `better-sqlite3` did not install a native binding for your Node/platform, run `(cd node_modules/better-sqlite3 && npx prebuild-install)` and then retry.
    - `npm start`
 
 3) Open the UI:
