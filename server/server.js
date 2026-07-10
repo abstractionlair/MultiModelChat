@@ -541,7 +541,7 @@ app.get('/api/projects/:projectId/files', (req, res) => {
 
     // Simple filter support (LIKE pattern)
     if (filter) {
-      const pattern = filter.replace('*', '%');
+      const pattern = filter.replace(/\*/g, '%');
       query += ` AND path LIKE ?`;
       params.push(pattern);
     }
@@ -555,7 +555,7 @@ app.get('/api/projects/:projectId/files', (req, res) => {
     let countQuery = 'SELECT COUNT(*) as count FROM project_files WHERE project_id = ?';
     const countParams = [projectId];
     if (filter) {
-      const pattern = filter.replace('*', '%');
+      const pattern = filter.replace(/\*/g, '%');
       countQuery += ' AND path LIKE ?';
       countParams.push(pattern);
     }
