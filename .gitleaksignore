@@ -1,0 +1,5 @@
+# Fake OpenAI-shaped API key used as a fixture in a unit test that asserts the
+# public-guard error sanitizer redacts "sk-..." strings from error messages
+# (server/test-public-guard.js, commit bdda7cc). Sequential placeholder value
+# (abc123def456...), never a live credential.
+bdda7cc8905fa5c476265af2b42f9bff0f79bbfc:server/test-public-guard.js:generic-api-key:518
