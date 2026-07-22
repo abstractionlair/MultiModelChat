@@ -7,7 +7,7 @@ const { chunkFileContent, chunkMessage } = require('./chunker');
  */
 async function indexFile(fileId) {
   const file = db.prepare(`
-    SELECT id, project_id, path, content, content_location, metadata
+    SELECT id, project_id, path, content, content_location, content_hash, metadata
     FROM project_files
     WHERE id = ?
   `).get(fileId);
@@ -16,6 +16,8 @@ async function indexFile(fileId) {
     throw new Error(`File not found: ${fileId}`);
   }
 
+  const metadata = file.metadata ? JSON.parse(file.metadata) : {};
+
   const existing = db.prepare(`
     SELECT COUNT(*) as count
     FROM content_chunks
@@ -23,8 +25,16 @@ async function indexFile(fileId) {
   `).get(fileId);
 
   if (existing.count > 0) {
-    console.log(`File ${fileId} already indexed, skipping`);
-    return { skipped: true };
+    // Replacing a file keeps its id (upsert on project_id+path), so existing
+    // chunks may describe old content. Only skip when the indexed hash still
+    // matches; otherwise purge and reindex. Chunks without an indexed_hash
+    // predate this check and get reindexed once.
+    if (metadata.indexed_hash && metadata.indexed_hash === file.content_hash) {
+      console.log(`File ${fileId} unchanged since last index, skipping`);
+      return { skipped: true };
+    }
+    const removed = removeChunks('file', fileId);
+    console.log(`File ${fileId} content changed: removed ${removed} stale chunks, reindexing`);
   }
 
   let content = file.content;
@@ -36,8 +46,6 @@ async function indexFile(fileId) {
     console.log(`File ${fileId} has no content, skipping index`);
     return { skipped: true };
   }
-
-  const metadata = file.metadata ? JSON.parse(file.metadata) : {};
 
   if (metadata.retrieval_eligible === false) {
     console.log(`File ${fileId} not eligible for retrieval, skipping`);
@@ -88,7 +96,7 @@ async function indexFile(fileId) {
     }
   })();
 
-  const updatedMetadata = { ...metadata, last_indexed_at: now };
+  const updatedMetadata = { ...metadata, last_indexed_at: now, indexed_hash: file.content_hash };
   db.prepare(`
     UPDATE project_files
     SET metadata = ?
@@ -105,6 +113,17 @@ async function indexFile(fileId) {
 }
 
 /**
+ * Remove all chunks for a source. The cleanup_fts_chunks trigger cascades
+ * each content_chunks delete to retrieval_index.
+ */
+function removeChunks(sourceType, sourceId) {
+  const res = db.prepare(`
+    DELETE FROM content_chunks WHERE source_type = ? AND source_id = ?
+  `).run(sourceType, sourceId);
+  return res.changes;
+}
+
+/**
  * Index a conversation message
  */
 function indexMessage(messageId) {
@@ -116,6 +135,10 @@ function indexMessage(messageId) {
 
   if (!message) {
     throw new Error(`Message not found: ${messageId}`);
+  }
+
+  if (!message.content || !message.content.trim()) {
+    return { skipped: true };
   }
 
   const conv = db.prepare(`
@@ -208,8 +231,41 @@ async function reindexProject(projectId) {
   return results;
 }
 
+/**
+ * Index every conversation message that has no chunks yet. Messages are
+ * immutable, so "no chunks" is the only staleness case. Run once after
+ * deploying message indexing to cover pre-existing history.
+ */
+function backfillMessages() {
+  const rows = db.prepare(`
+    SELECT m.id
+    FROM conversation_messages m
+    LEFT JOIN content_chunks c
+      ON c.source_type = 'conversation_message' AND c.source_id = m.id
+    WHERE c.id IS NULL AND m.content IS NOT NULL AND m.content != ''
+  `).all();
+
+  console.log(`Backfilling ${rows.length} unindexed messages...`);
+
+  let indexed = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const result = indexMessage(row.id);
+      if (!result.skipped) indexed++;
+    } catch (err) {
+      failed++;
+      console.error(`Failed to index message ${row.id}:`, err.message);
+    }
+  }
+
+  return { candidates: rows.length, indexed, failed };
+}
+
 module.exports = {
   indexFile,
   indexMessage,
-  reindexProject
+  reindexProject,
+  removeChunks,
+  backfillMessages
 };

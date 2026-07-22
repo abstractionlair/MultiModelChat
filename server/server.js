@@ -26,7 +26,7 @@ const { runMigrations } = require('./db/migrate');
 const { migrateConversationsToSQLite, loadConversationsFromSQLite } = require('./db/migrate-memory-to-sqlite');
 const { getConfig, setConfig, getAllConfig, initializeDefaultConfig } = require('./config/index');
 
-const { indexFile } = require('./indexing/indexer');
+const { indexFile, indexMessage } = require('./indexing/indexer');
 const { search } = require('./indexing/search');
 const { buildSystemPrompt } = require('./prompts/builder');
 
@@ -113,6 +113,19 @@ const DEFAULT_PROMPTS = {
 // Load system prompts from config (with fallback to defaults)
 function getSystemPrompts() {
   return getConfig('system_prompts', DEFAULT_PROMPTS);
+}
+
+// Merge per-request systemPrompts over the config-stored ones. The request
+// wins field-by-field; perAgent/perModel only exist per-request.
+function mergeSystemPrompts(requestPrompts) {
+  const cfg = getSystemPrompts();
+  const req = requestPrompts || {};
+  return {
+    common: typeof req.common === 'string' ? req.common : cfg.common,
+    perProvider: { ...(cfg.perProvider || {}), ...(req.perProvider || {}) },
+    perAgent: req.perAgent,
+    perModel: req.perModel,
+  };
 }
 
 function toPositiveInt(value) {
@@ -846,6 +859,9 @@ app.post('/api/turn', async (req, res) => {
       round.user.ts
     );
 
+    // Index for search; never let indexing break the turn
+    try { indexMessage(userMsgId); } catch (e) { console.error('Message indexing failed:', e); }
+
     // Update conversation metadata
     db.prepare(`
       UPDATE conversations
@@ -885,6 +901,8 @@ app.post('/api/turn', async (req, res) => {
     // FIX 6b: Don't double-count turns — rate is counted per real call by the
     // guard block above (which ran BEFORE persistence), not by trackTurn.
 
+    const mergedSystemPrompts = mergeSystemPrompts(systemPrompts);
+
     const tasks = preparedTargets.map(async (target) => {
       const { provider, requestedModelId, modelId, name, agentId, options, index } = target;
       const adapter = getAdapter(provider);
@@ -902,7 +920,10 @@ app.post('/api/turn', async (req, res) => {
         conversationInfo: {
           round_count: conv.rounds.length,
           summary: conv.summary
-        }
+        },
+        systemPrompts: mergedSystemPrompts,
+        agentId,
+        modelIndex: index
       });
       if (capNote) system = [system, capNote].filter(Boolean).join('\n\n');
       // Build full-history messages per provider
@@ -974,6 +995,9 @@ app.post('/api/turn', async (req, res) => {
           }),
           msg.ts
         );
+
+        // Index for search; never let indexing break the turn
+        try { indexMessage(agentMsgId); } catch (e) { console.error('Message indexing failed:', e); }
         const finishReason = result && result.meta && (result.meta.finish_reason || result.meta.finishReason || result.meta.stop_reason || (result.meta.promptFeedback && result.meta.promptFeedback.blockReason));
         if (dbg) {
           console.log('[turn] result', {
@@ -1185,7 +1209,9 @@ app.post('/api/preview-view', (req, res) => {
       conversationInfo: {
         round_count: convCopy.rounds.length,
         summary: conv.summary
-      }
+      },
+      systemPrompts: mergeSystemPrompts(systemPrompts),
+      agentId
     });
     let view;
     if (provider === 'openai' || provider === 'xai') {

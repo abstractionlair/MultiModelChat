@@ -8,7 +8,7 @@
 
 const { db } = require('../db/index');
 const { runMigrations } = require('../db/migrate');
-const { reindexProject } = require('./indexer');
+const { reindexProject, backfillMessages } = require('./indexer');
 
 async function main() {
   console.log('Starting reindexing...\n');
@@ -45,6 +45,9 @@ async function main() {
 
     console.log(`\nResults: ${success} indexed, ${skipped} skipped, ${failed} failed`);
   }
+
+  const backfill = backfillMessages();
+  console.log(`Messages: ${backfill.indexed} indexed, ${backfill.failed} failed (of ${backfill.candidates} unindexed)`);
 
   console.log('\n✓ Reindexing complete!');
 }
