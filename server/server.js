@@ -1018,6 +1018,13 @@ app.post('/api/turn', async (req, res) => {
         const errorMsg = publicGuard.isPublicMode()
           ? publicGuard.genericProviderError(provider) || safeErr.message
           : safeErr.message;
+        // Always log the underlying failure server-side. The client-facing
+        // message is deliberately generic in PUBLIC_MODE, which otherwise makes
+        // a revoked key or bad model id undiagnosable from the outside.
+        console.error(
+          `[turn] ${provider}:${modelId} failed:`,
+          String(safeErr.message || '').replace(/key=[^&\s"']+/gi, 'key=[redacted]')
+        );
         const maxTokens = options && options.maxTokens !== undefined ? options.maxTokens : resolveMaxTokens(provider);
         if (dbg) {
           console.log('[turn] error', {
@@ -1264,8 +1271,17 @@ app.get('/api/models', async (req, res) => {
       const providers = {};
       const defaults = {};
       for (const [prov, ids] of Object.entries(byProvider)) {
-        const orig = (data.providers[prov] && data.providers[prov].models) || [];
-        providers[prov] = { available: true, models: ids.map(id => orig.find(m => m.id === id) || { id }) };
+        const upstream = data.providers[prov] || {};
+        const orig = Array.isArray(upstream.models) ? upstream.models : [];
+        // Carry through the real upstream availability. Advertising an
+        // allowlisted provider as available when its credentials are dead makes
+        // the picker offer a model that fails on every turn.
+        providers[prov] = {
+          available: upstream.available !== false,
+          models: ids.map(id => orig.find(m => m.id === id) || { id }),
+        };
+        // Generic reason only — the upstream error text can hint at credentials.
+        if (upstream.available === false) providers[prov].unavailableReason = 'provider_unreachable';
         defaults[prov] = ids[0];
       }
       providers.mock = data.providers.mock || { available: true, models: [{ id: 'mock-echo' }, { id: 'mock-lorem' }] };

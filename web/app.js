@@ -281,9 +281,63 @@ function readSystemPrompts() {
 
 // --- Model Management ---
 
+const PROVIDER_LABELS = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  xai: 'xAI',
+  mock: 'Mock',
+};
+
 function getProviderModels(provider) {
   const p = (MODEL_INDEX && MODEL_INDEX.providers && MODEL_INDEX.providers[provider]) || {};
   return Array.isArray(p.models) ? p.models : [];
+}
+
+// A provider the server listed but whose upstream probe failed (dead key,
+// unreachable API). Offering it silently produces a failure on every turn.
+function providerIsUnavailable(provider) {
+  const p = (MODEL_INDEX && MODEL_INDEX.providers && MODEL_INDEX.providers[provider]) || {};
+  return p.available === false;
+}
+
+function providerLabel(provider) {
+  const base = PROVIDER_LABELS[provider] || provider;
+  return providerIsUnavailable(provider) ? `${base} (unavailable)` : base;
+}
+
+// Providers the UI should offer. In public mode the server already restricts
+// /api/models to the allowlist, so its keys are the source of truth.
+function listOfferedProviders() {
+  const keys = Object.keys((MODEL_INDEX && MODEL_INDEX.providers) || {});
+  return keys.length ? keys : Object.keys(PROVIDER_LABELS);
+}
+
+// Mark providers whose upstream probe failed rather than letting them be
+// picked and fail at send time. Kept visible so the reason is obvious.
+function applyProviderAvailability(row) {
+  const providerSel = q('.provider', row);
+  if (!providerSel) return;
+  Array.from(providerSel.options).forEach(o => {
+    o.disabled = providerIsUnavailable(o.value);
+    o.textContent = providerLabel(o.value);
+  });
+  if (providerSel.selectedOptions[0]?.disabled) {
+    const firstLive = Array.from(providerSel.options).find(o => !o.disabled);
+    if (firstLive) providerSel.value = firstLive.value;
+  }
+}
+
+// The model a configured row is using for this provider, so the preview panel
+// can follow the rows instead of always falling back to the first provider.
+function configuredModelForProvider(provider) {
+  for (const row of getModelRows()) {
+    if (q('.provider', row)?.value !== provider) continue;
+    let m = q('select.modelSelect', row)?.value;
+    if (m === '__custom__') m = q('.modelId', row)?.value?.trim();
+    if (m) return m;
+  }
+  return undefined;
 }
 
 function getModelRows() {
@@ -366,6 +420,7 @@ function populateModelSelect(row, preserve = false) {
   renderOptionsPanel(row);
   applyModelPromptDefault(row);
   updateModelPromptLabel(row);
+  populatePreviewProvider();
 }
 
 function wireRowEvents(row) {
@@ -401,6 +456,7 @@ function wireRowEvents(row) {
         customInput.style.display = 'none';
       }
       updateModelPromptLabel(row);
+      populatePreviewProvider();
     });
   }
 
@@ -456,6 +512,8 @@ function makeModelRow() {
       providerSel.value = providerSel.options[0].value;
     }
   }
+
+  applyProviderAvailability(row);
 
   wireRowEvents(row);
   populateModelSelect(row);
@@ -601,12 +659,14 @@ function syncRowsToCount() {
   }
   modelCountEl.value = String(desired);
   refreshPromptLabels();
+  populatePreviewProvider();
 }
 
 function syncCountToRows() {
   const rows = getModelRows();
   modelCountEl.value = String(rows.length);
   refreshPromptLabels();
+  populatePreviewProvider();
 }
 
 // --- Data Reading ---
@@ -775,19 +835,50 @@ function findPreviewAgentId(provider, modelId) {
   return undefined;
 }
 
+// The preview provider list is built from the configured model rows so the
+// panel reflects the models you actually selected. It was hard-coded to the
+// full provider set, which left the preview stuck on OpenAI no matter what.
+function populatePreviewProvider() {
+  if (!previewProviderEl) return;
+  const previous = previewProviderEl.value;
+
+  const configured = [];
+  for (const row of getModelRows()) {
+    const p = q('.provider', row)?.value;
+    if (p && !configured.includes(p)) configured.push(p);
+  }
+  const offered = configured.length ? configured : listOfferedProviders();
+
+  previewProviderEl.innerHTML = '';
+  for (const p of offered) {
+    const o = document.createElement('option');
+    o.value = p;
+    o.textContent = providerLabel(p);
+    previewProviderEl.appendChild(o);
+  }
+  if (offered.includes(previous)) previewProviderEl.value = previous;
+  populatePreviewModel();
+}
+
 function populatePreviewModel() {
   const provider = previewProviderEl?.value || 'openai';
   if (!previewModelEl) return;
 
+  const previous = previewModelEl.value;
   previewModelEl.innerHTML = '';
-  const optSmart = document.createElement('option');
-  optSmart.value = 'smart';
-  optSmart.textContent = smartLabelFor(provider);
-  previewModelEl.appendChild(optSmart);
 
-  const sep = document.createElement('option');
-  sep.disabled = true; sep.textContent = '──────────';
-  previewModelEl.appendChild(sep);
+  // 'smart' resolves to a provider default that isn't allowlisted in public
+  // mode — omit it there, same as the row pickers.
+  if (!IS_PUBLIC) {
+    const optSmart = document.createElement('option');
+    optSmart.value = 'smart';
+    optSmart.textContent = smartLabelFor(provider);
+    previewModelEl.appendChild(optSmart);
+
+    const sep = document.createElement('option');
+    sep.disabled = true; sep.textContent = '──────────';
+    previewModelEl.appendChild(sep);
+  }
 
   const list = getProviderModels(provider);
   for (const m of list) {
@@ -796,7 +887,14 @@ function populatePreviewModel() {
     o.textContent = m.displayName || m.id;
     previewModelEl.appendChild(o);
   }
-  previewModelEl.value = 'smart';
+
+  // Prefer the model a row is actually configured with, so Generate Preview
+  // resolves to that agent instead of falling back.
+  const values = Array.from(previewModelEl.options).filter(o => !o.disabled).map(o => o.value);
+  const configured = configuredModelForProvider(provider);
+  if (previous && values.includes(previous)) previewModelEl.value = previous;
+  else if (configured && values.includes(configured)) previewModelEl.value = configured;
+  else if (values.length) previewModelEl.value = values[0];
 }
 
 // Event Listeners
@@ -813,8 +911,13 @@ if (refreshModelsBtn) {
   refreshModelsBtn.addEventListener('click', async () => {
     await loadModelsIndex();
     const rows = getModelRows();
-    for (const r of rows) populateModelSelect(r, true);
-    populatePreviewModel();
+    // Re-apply availability first: a provider may have gone down (or come back)
+    // since the page loaded, and existing rows still carry the old state.
+    for (const r of rows) {
+      applyProviderAvailability(r);
+      populateModelSelect(r, true);
+    }
+    populatePreviewProvider();
   });
 }
 
@@ -1085,7 +1188,7 @@ userMsgEl.addEventListener('keypress', (e) => {
   container.appendChild(makeModelRow());
   container.appendChild(makeModelRow());
   syncCountToRows();
-  populatePreviewModel();
+  populatePreviewProvider();
   if (previewProviderEl) previewProviderEl.addEventListener('change', populatePreviewModel);
 
   // Show the public banner + models note
